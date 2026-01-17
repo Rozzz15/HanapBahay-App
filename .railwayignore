@@ -1,0 +1,25 @@
+# Ignore Expo/React Native files during Railway deployment
+# Only deploy the server/ directory
+
+# Expo/React Native
+app/
+components/
+constants/
+hooks/
+assets/
+android/
+ios/
+.expo/
+
+# Config files for mobile app
+app.json
+babel.config.js
+metro.config.js
+tsconfig.json
+tailwind.config.js
+nativewind-env.d.ts
+
+# Mobile-specific
+eas.json
+
+# Keep server/ directory - it will be deployed

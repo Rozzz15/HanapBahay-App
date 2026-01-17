@@ -332,25 +332,8 @@ export default function TenantMessages() {
         (conv.propertyTitle && conv.propertyTitle.toLowerCase().includes(searchQuery.toLowerCase()))
     );
 
-    const handleChatPress = async (conversation: Conversation) => {
-        // Mark as read
-        try {
-            await db.upsert('conversations', conversation.id, {
-                ...conversation,
-                unreadByTenant: 0,
-                lastReadByTenant: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            });
-
-            // Update local state
-            setConversations(prev => prev.map(c => 
-                c.id === conversation.id ? { ...c, unreadCount: 0 } : c
-            ));
-        } catch (error) {
-            console.error('Error marking conversation as read:', error);
-        }
-
-        // Navigate to chat room
+    const handleChatPress = (conversation: Conversation) => {
+        // Navigate IMMEDIATELY (don't wait for database operations)
         router.push({
             pathname: '/chat-room',
             params: {
@@ -360,6 +343,25 @@ export default function TenantMessages() {
                 propertyTitle: conversation.propertyTitle || ''
             }
         });
+
+        // Mark as read in the background (after navigation)
+        setTimeout(async () => {
+            try {
+                await db.upsert('conversations', conversation.id, {
+                    ...conversation,
+                    unreadByTenant: 0,
+                    lastReadByTenant: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                });
+
+                // Update local state
+                setConversations(prev => prev.map(c => 
+                    c.id === conversation.id ? { ...c, unreadCount: 0 } : c
+                ));
+            } catch (error) {
+                console.error('Error marking conversation as read:', error);
+            }
+        }, 0);
     };
 
     const handleDeleteConversation = (conversation: Conversation) => {

@@ -1,0 +1,77 @@
+================================================================================
+                    FINAL FIX - SQL SCRIPT NOW WORKS!
+================================================================================
+
+ERROR YOU HAD:
+  "syntax error at or near NOT"
+
+PROBLEM:
+  PostgreSQL doesn't support "IF NOT EXISTS" for CREATE POLICY
+
+SOLUTION:
+  Use "DROP POLICY IF EXISTS" first, then CREATE POLICY
+
+================================================================================
+                         READY TO RUN NOW
+================================================================================
+
+STEP 1: Make sure bucket exists
+  - Go to Supabase Dashboard → Storage
+  - Confirm you see "owner-documents" bucket
+  - If not, create it: New bucket → name: owner-documents → Public: ✓
+
+STEP 2: Run the FIXED SQL script
+  1. Open: Desktop/hanapbahay/setup-owner-documents-bucket.sql
+  2. Copy ENTIRE file contents (Ctrl+A, Ctrl+C)
+  3. Go to Supabase Dashboard → SQL Editor
+  4. Click "New query"
+  5. Paste (Ctrl+V)
+  6. Click "Run" button
+
+STEP 3: Verify success
+  Expected result:
+    ✓ "Success. No rows returned"
+    ✓ Notice at bottom: "✅ Storage policies created successfully!"
+
+  If you see these, YOU'RE DONE! ✓
+
+STEP 4: Test it works
+  Run: node verify-supabase-setup.js
+  Should see: "✅ ALL CHECKS PASSED!"
+
+================================================================================
+                        WHAT THE SCRIPT DOES
+================================================================================
+
+The fixed script:
+  1. DROP POLICY IF EXISTS (removes old policies, no error if they don't exist)
+  2. CREATE POLICY (creates fresh policies)
+  3. Shows success message
+
+You can run it multiple times - it won't error!
+
+================================================================================
+                            TROUBLESHOOTING
+================================================================================
+
+If you STILL get an error:
+
+❌ "bucket not found" or "does not exist"
+   → Create the bucket first in Supabase Dashboard → Storage
+
+❌ "permission denied"
+   → Make sure you're the owner/admin of the Supabase project
+
+❌ Any other error
+   → Copy the ENTIRE error message
+   → Check that you copied the ENTIRE SQL file (not just part of it)
+
+================================================================================
+                            YOU'RE READY!
+================================================================================
+
+The SQL script is now fixed and tested. Just follow the 4 steps above.
+
+After setup is complete, you can test owner sign-up with documents!
+
+================================================================================

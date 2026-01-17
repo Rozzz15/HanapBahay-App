@@ -4,6 +4,8 @@
  */
 
 export interface ImageOptimizationOptions {
+    width?: number;
+    height?: number;
     maxWidth?: number;
     maxHeight?: number;
     quality?: number;
@@ -37,7 +39,7 @@ class ImageLoadingMetricsClass {
             console.log(`Image loaded in ${loadTime}ms: ${uri.substring(0, 50)}...`);
             this.loadingTimes.delete(uri);
         }
-        
+
         if (success) {
             this.successCount++;
         } else {
@@ -94,7 +96,7 @@ export const optimizeImageForStorage = async (
         // If it's already a data URI, check if it needs optimization
         if (imageUri.startsWith('data:')) {
             const currentSizeKB = (imageUri.length * 0.75) / 1024; // Approximate base64 to KB conversion
-            
+
             if (currentSizeKB <= maxSizeKB) {
                 return imageUri; // Already optimized enough
             }
@@ -131,13 +133,13 @@ export const compressImageData = (imageData: string): string => {
             // For now, just return the original
             return imageData;
         }
-        
+
         if (imageData.startsWith('data:image/png')) {
             // For PNG, we could implement more sophisticated compression
             // For now, just return the original
             return imageData;
         }
-        
+
         return imageData;
     } catch (error) {
         console.error('Error compressing image data:', error);
@@ -160,30 +162,46 @@ export const optimizeImageUri = (uri: string, options: ImageOptimizationOptions 
 export const isValidImageUri = (uri: string): boolean => {
     try {
         if (!uri || typeof uri !== 'string') {
+            console.log('❌ Invalid URI: empty or not a string');
             return false;
         }
-        
-        // Check for data URIs
-        if (uri.startsWith('data:image/')) {
+
+        // Trim whitespace
+        const trimmedUri = uri.trim();
+
+        if (trimmedUri.length === 0) {
+            console.log('❌ Invalid URI: empty after trim');
+            return false;
+        }
+
+        // Check for data URIs (base64 images)
+        if (trimmedUri.startsWith('data:image/')) {
+            console.log('✅ Valid data URI detected, length:', trimmedUri.length);
             return true;
         }
-        
+
         // Check for HTTP/HTTPS URLs
-        if (uri.startsWith('http://') || uri.startsWith('https://')) {
+        if (trimmedUri.startsWith('http://') || trimmedUri.startsWith('https://')) {
+            console.log('✅ Valid HTTP/HTTPS URL detected');
             return true;
         }
-        
+
         // Check for file URIs (for local files)
-        if (uri.startsWith('file://')) {
+        if (trimmedUri.startsWith('file://')) {
+            console.log('✅ Valid file:// URI detected');
             return true;
         }
-        
+
         // Check for asset URIs (React Native assets)
-        if (uri.startsWith('asset://') || uri.startsWith('content://')) {
+        if (trimmedUri.startsWith('asset://') || trimmedUri.startsWith('content://')) {
+            console.log('✅ Valid asset/content URI detected');
             return true;
         }
-        
-        return false;
+
+        // Be more permissive: Accept any non-empty string that looks like it could be a URI
+        // This helps with custom URI schemes or formats we haven't considered
+        console.log('⚠️ Unknown URI format, but accepting:', trimmedUri.substring(0, 50) + '...');
+        return true; // Changed from false to true to be more permissive
     } catch (error) {
         console.error('Error validating image URI:', error);
         return false;

@@ -1,6 +1,5 @@
 import React from 'react';
-import { Svg } from 'react-native-svg';
-import { Path } from 'react-native-svg';
+import { Svg, Path } from 'react-native-svg';
 
 type IconSize = '2xs' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
@@ -58,11 +57,13 @@ export { Icon };
 
 // Simple icon creation function
 const createIcon = ({ viewBox = '0 0 24 24', path }: { viewBox?: string; path: React.ReactNode }) => {
-  return React.forwardRef<Svg, IconProps>((props, ref) => (
+  const IconComponent = React.forwardRef<Svg, IconProps>((props, ref) => (
     <Icon ref={ref} {...props}>
       {path}
     </Icon>
   ));
+  IconComponent.displayName = 'IconComponent';
+  return IconComponent;
 };
 
 export { createIcon };

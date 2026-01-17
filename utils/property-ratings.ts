@@ -237,7 +237,6 @@ async function sendNewRatingNotification(
         senderId: rating.userId,
         text: messageText,
         createdAt: now,
-        readBy: [rating.userId],
         type: 'notification', // Changed to notification type
         propertyId: propertyId,
         propertyTitle: listing.propertyType,

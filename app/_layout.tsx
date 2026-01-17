@@ -12,6 +12,7 @@ import { PermissionsProvider } from '../context/PermissionContext';
 import { AuthProvider } from '../context/AuthContext';
 import { NotificationProvider } from '../context/NotificationContext';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { InternetRequired } from '../components/common/InternetRequired';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -36,44 +37,46 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <NotificationProvider>
-          <PermissionsProvider>
-            <GluestackUIProvider mode="light">
-              {/* Force light theme for clean white look across the app */}
-              <ThemeProvider value={DefaultTheme}>
-                <ToastProvider>
-                <Stack screenOptions={{ 
-                  headerShown: false, 
-                  contentStyle: { backgroundColor: '#FFFFFF' },
-                  gestureEnabled: true,
-                  animation: 'slide_from_right',
-                  animationDuration: 200
-                }}>
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="(tabs)" />
-                  <Stack.Screen name="(owner)" />
-                  <Stack.Screen name="(brgy)" />
-                  <Stack.Screen name="(get-started)" />
-                  <Stack.Screen name="+not-found" />
-                  <Stack.Screen name="unauthorized" options={{ title: 'Unauthorized' }} />
-                  <Stack.Screen name="login" options={{ headerShown: false }} />
-                  <Stack.Screen name="sign-up" options={{ headerShown: false }} />
-                  <Stack.Screen name="forgot-password" options={{ headerShown: false }} />
-                  <Stack.Screen name="property-preview" options={{ headerShown: false }} />
-                  <Stack.Screen name="book-now" options={{ headerShown: false }} />
-                  <Stack.Screen name="filter" options={{ headerShown: false }} />
-                  <Stack.Screen name="chat-room" options={{ headerShown: false }} />
-                  <Stack.Screen name="listing-dashboard" options={{ headerShown: false }} />
-                  <Stack.Screen name="listing-property-details" options={{ headerShown: false }} />
-                </Stack>
-                <StatusBar style="dark" />
-              </ToastProvider>
-            </ThemeProvider>
-          </GluestackUIProvider>
-        </PermissionsProvider>
-        </NotificationProvider>
-      </AuthProvider>
+      <InternetRequired>
+        <AuthProvider>
+          <NotificationProvider>
+            <PermissionsProvider>
+              <GluestackUIProvider mode="light">
+                {/* Force light theme for clean white look across the app */}
+                <ThemeProvider value={DefaultTheme}>
+                  <ToastProvider>
+                  <Stack screenOptions={{ 
+                    headerShown: false, 
+                    contentStyle: { backgroundColor: '#FFFFFF' },
+                    gestureEnabled: true,
+                    animation: 'slide_from_right',
+                    animationDuration: 200
+                  }}>
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen name="(owner)" />
+                    <Stack.Screen name="(brgy)" />
+                    <Stack.Screen name="(get-started)" />
+                    <Stack.Screen name="+not-found" />
+                    <Stack.Screen name="unauthorized" options={{ title: 'Unauthorized' }} />
+                    <Stack.Screen name="login" options={{ headerShown: false }} />
+                    <Stack.Screen name="sign-up" options={{ headerShown: false }} />
+                    <Stack.Screen name="forgot-password" options={{ headerShown: false }} />
+                    <Stack.Screen name="property-preview" options={{ headerShown: false }} />
+                    <Stack.Screen name="book-now" options={{ headerShown: false }} />
+                    <Stack.Screen name="filter" options={{ headerShown: false }} />
+                    <Stack.Screen name="chat-room" options={{ headerShown: false }} />
+                    <Stack.Screen name="listing-dashboard" options={{ headerShown: false }} />
+                    <Stack.Screen name="listing-property-details" options={{ headerShown: false }} />
+                  </Stack>
+                  <StatusBar style="dark" />
+                </ToastProvider>
+              </ThemeProvider>
+            </GluestackUIProvider>
+          </PermissionsProvider>
+          </NotificationProvider>
+        </AuthProvider>
+      </InternetRequired>
     </ErrorBoundary>
   );
 }

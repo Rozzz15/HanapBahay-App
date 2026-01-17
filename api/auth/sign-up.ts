@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { mockSignUp, testAsyncStorage } from '../../utils/mock-auth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../../utils/supabase-client';
+import { storeAuthUser } from '../../utils/auth-user';
 import { db, generateId } from '@/utils/db';
 import { DbUserRecord, TenantProfileRecord, OwnerProfileRecord, OwnerVerificationRecord, OwnerApplicationRecord, BrgyNotificationRecord } from '@/types';
+import { validateEmailForSignup } from '@/utils/validation';
 
 // Allow role selection: tenant or owner
 export const signUpSchema = z.object({
@@ -16,13 +17,20 @@ export const signUpSchema = z.object({
     confirmPassword: z.string().min(6, "Confirm password must be at least 6 characters"),
     role: z.enum(['tenant', 'owner']).default('tenant'),
     gender: z.enum(['male', 'female']).optional(),
-    familyType: z.enum(['individual', 'family']).optional(),
+    familyType: z.enum(['individual', 'couple', 'family', 'group']).optional(),
     emergencyContactPerson: z.string().optional(),
     emergencyContactNumber: z.string().optional(),
     // Owner-specific fields
     houseNumber: z.string().optional(),
     street: z.string().optional(),
     barangay: z.enum(['RIZAL', 'TALOLONG', 'GOMEZ', 'MAGSAYSAY', 'BURGOS']).optional(),
+    // Owner documents (already uploaded to Supabase Storage)
+    documents: z.array(z.object({
+        id: z.string(),
+        name: z.string(),
+        uri: z.string(),
+        uploadedAt: z.string(),
+    })).optional(),
 }).refine((data) => data.password === data.confirmPassword, {
     message: "Passwords must match",
     path: ["confirmPassword"],
@@ -30,27 +38,47 @@ export const signUpSchema = z.object({
 
 export type SignUpData = z.infer<typeof signUpSchema>;
 
-// Sign-up function using mock authentication
+// Sign-up function using real Supabase authentication
 export async function signUpUser(data: SignUpData) {
     try {
-        console.log('🔐 Starting sign-up process for:', data.email, 'role:', data.role);
-        
-        // Test AsyncStorage functionality first
-        console.log('🧪 Testing AsyncStorage functionality...');
-        const storageTest = await testAsyncStorage();
-        if (!storageTest) {
-            throw new Error('AsyncStorage is not working properly');
-        }
-        console.log('✅ AsyncStorage test passed');
+        console.log('🔐 Starting Supabase sign-up process for:', data.email, 'role:', data.role);
         
         signUpSchema.parse(data); // Validate input before proceeding
         console.log('✅ Schema validation passed');
-        const result = await mockSignUp(data.email, data.password, data.role);
-        console.log('📊 Mock sign-up result:', result);
-
-        if (!result.success) {
-            throw new Error(result.error || "Failed to create account");
+        
+        // Additional email validation for Supabase-specific restrictions
+        const emailValidation = validateEmailForSignup(data.email);
+        if (!emailValidation.isValid) {
+            console.error('❌ Email validation failed:', emailValidation.error);
+            throw new Error(emailValidation.error || 'Invalid email address');
         }
+        console.log('✅ Email validation passed');
+        
+        // Sign up with Supabase
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+            email: data.email,
+            password: data.password,
+            options: {
+                data: {
+                    name: data.name,
+                    role: data.role,
+                    phone: data.contactNumber,
+                }
+            }
+        });
+
+        if (authError) {
+            console.error('❌ Supabase sign-up error:', authError);
+            throw new Error(authError.message || "Failed to create account");
+        }
+
+        if (!authData.user) {
+            throw new Error("Sign-up failed - no user data returned");
+        }
+
+        console.log('✅ Supabase sign-up successful:', authData.user.id);
+
+        const userId = authData.user.id;
 
         // Store personal details from sign-up form
         const personalDetails = {
@@ -66,40 +94,134 @@ export async function signUpUser(data: SignUpData) {
             profilePhoto: null
         };
 
-        // Write to local DB (organized collections)
+        // Create user profile in Supabase database
         const now = new Date().toISOString();
-        const userRecord: DbUserRecord = {
-            id: result.user?.id || generateId('user'),
+        
+        // Prepare data for Supabase (using snake_case for database columns)
+        const supabaseUserRecord = {
+            id: userId,
             email: data.email,
             name: data.name,
             phone: data.contactNumber,
             address: data.address || '',
             role: data.role,
-            roles: [data.role], // Add roles array for AuthContext compatibility
-            gender: data.gender, // Save gender for analytics
+            roles: [data.role],
+            gender: data.gender,
+            family_type: data.familyType, // snake_case for database
+            created_at: now, // snake_case for database
+            updated_at: now, // snake_case for database
+        };
+        
+        console.log('💾 Saving user record to Supabase database:', supabaseUserRecord);
+        
+        // Insert into Supabase users table - CRITICAL: This must succeed before creating tenant/owner profiles
+        const { error: userInsertError } = await supabase
+            .from('users')
+            .insert([supabaseUserRecord]);
+        
+        let userInsertSuccessful = false;
+        
+        if (userInsertError) {
+            // Check if it's a duplicate email error (code 23505)
+            if (userInsertError.code === '23505') {
+                console.log('⚠️ User already exists in database (duplicate email), checking if record exists...');
+                // Verify the user actually exists in the database
+                const { data: existingUser, error: checkError } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('id', userId)
+                    .single();
+                
+                if (existingUser) {
+                    console.log('✅ User record exists in database, can proceed');
+                    userInsertSuccessful = true;
+                } else {
+                    console.error('❌ CRITICAL: User record does not exist despite duplicate error:', checkError);
+                    throw new Error('User record verification failed');
+                }
+            } else {
+                console.error('❌ CRITICAL: Error saving to Supabase users table:', userInsertError);
+                // This is a critical error - we cannot proceed without the user record
+                throw new Error(`Failed to create user record: ${userInsertError.message}`);
+            }
+        } else {
+            console.log('✅ User record saved to Supabase');
+            // Verify the insert was successful by checking if the record exists
+            const { data: verifyUser, error: verifyError } = await supabase
+                .from('users')
+                .select('id')
+                .eq('id', userId)
+                .single();
+            
+            if (verifyUser) {
+                console.log('✅ User record verified in database');
+                userInsertSuccessful = true;
+            } else {
+                console.error('❌ CRITICAL: User record not found after insert:', verifyError);
+                throw new Error('User record verification failed after insert');
+            }
+        }
+        
+        // Ensure we have a successful user insert before proceeding
+        if (!userInsertSuccessful) {
+            throw new Error('User record was not successfully created or verified');
+        }
+        
+        // Also prepare for local DB (using camelCase)
+        const userRecord: DbUserRecord = {
+            id: userId,
+            email: data.email,
+            name: data.name,
+            phone: data.contactNumber,
+            address: data.address || '',
+            role: data.role,
+            roles: [data.role],
+            gender: data.gender,
             familyType: data.familyType,
             createdAt: now,
-            updatedAt: now, // Track when user was last updated
+            updatedAt: now,
         };
-        console.log('💾 Saving user record to database:', userRecord);
-        console.log('💾 Gender saved:', userRecord.gender ? `✅ ${userRecord.gender}` : '⚠️ No gender provided');
-        try {
-          await db.upsert('users', userRecord.id, userRecord);
-          console.log('✅ User record saved successfully');
-        } catch (dbError) {
-          console.error('❌ Failed to save user record:', dbError);
-          throw new Error('Failed to save user to database');
-        }
+        
+        // Local storage removed - using Supabase cloud storage only
+        console.log('✅ User record saved to Supabase cloud only');
+        
+        // Store auth user for immediate login
+        await storeAuthUser({
+            id: userId,
+            email: data.email,
+            name: data.name,
+            roles: [data.role],
+            permissions: [],
+        });
+        console.log('✅ Auth user stored for immediate login');
 
-        // Save personal details to AsyncStorage scoped per user
-        const newUserId = userRecord.id;
-        const perUserPersonalKey = `personal_details:${newUserId}`;
-        await AsyncStorage.setItem(perUserPersonalKey, JSON.stringify(personalDetails));
-        console.log('Personal details saved from sign-up (per user):', perUserPersonalKey, personalDetails);
+        // Personal details now stored in Supabase cloud only (in user_profiles tables)
+        console.log('✅ Personal details saved to Supabase cloud only');
 
         if (data.role === 'owner') {
             console.log('👤 Creating owner profile for:', userRecord.id);
-            // Create owner profile
+            
+            // Prepare owner profile for Supabase (snake_case)
+            const supabaseOwnerProfile = {
+                user_id: userRecord.id,
+                business_name: data.name,
+                contact_number: data.contactNumber,
+                email: data.email,
+                created_at: now,
+            };
+            
+            // Insert into Supabase owner_profiles table (use upsert to handle duplicates)
+            const { error: ownerInsertError } = await supabase
+                .from('owner_profiles')
+                .upsert([supabaseOwnerProfile], { onConflict: 'user_id' });
+            
+            if (ownerInsertError) {
+                console.error('⚠️ Error saving to Supabase owner_profiles:', ownerInsertError);
+            } else {
+                console.log('✅ Owner profile saved to Supabase');
+            }
+            
+            // Create owner profile for local DB (camelCase)
             const ownerProfile: OwnerProfileRecord = {
                 userId: userRecord.id,
                 businessName: data.name,
@@ -107,42 +229,21 @@ export async function signUpUser(data: SignUpData) {
                 email: data.email,
                 createdAt: now,
             };
-            console.log('💾 Saving owner profile to owners collection...');
-            try {
-              await db.upsert('owners', userRecord.id, ownerProfile);
-              console.log('✅ Owner profile saved to owners collection');
-            } catch (dbError) {
-              console.error('❌ Failed to save owner profile to owners collection:', dbError);
-              throw new Error('Failed to save owner profile');
-            }
             
-            console.log('💾 Saving owner profile to owner_profiles collection...');
-            try {
-              await db.upsert('owner_profiles', userRecord.id, ownerProfile);
-              console.log('✅ Owner profile saved to owner_profiles collection');
-            } catch (dbError) {
-              console.error('❌ Failed to save owner profile to owner_profiles collection:', dbError);
-              throw new Error('Failed to save owner profile');
-            }
+            // Owner profile now stored in Supabase cloud only
+            console.log('✅ Owner profile saved to Supabase cloud only');
             
             console.log('✅ Owner profile created successfully');
 
-            // Load owner documents persisted by the sign-up screen
-            console.log('🔍 Checking for owner verification documents...');
-            const verificationRaw = await AsyncStorage.getItem('owner_verification');
-
-            const verification = verificationRaw ? JSON.parse(verificationRaw) : null;
-            console.log('📋 Verification data:', verification);
-
-            // Extract documents from verification data
-            const documents = verification?.documents || [];
+            // Get documents from sign-up data (already uploaded to Supabase Storage)
+            console.log('📄 Processing owner documents...');
+            const documents = data.documents || [];
+            console.log(`✅ Found ${documents.length} documents (already uploaded to Supabase Storage)`);
             
-            // For backward compatibility, also check for govIdUri
+            // Extract Government ID document URI for verification record
             let govIdUri: string | null = null;
-            if (verification?.govIdUri) {
-                govIdUri = verification.govIdUri;
-            } else if (documents.length > 0) {
-                // If no govIdUri but documents exist, use first document's URI for backward compatibility
+            if (documents.length > 0) {
+                // Find Government ID document
                 const govIdDoc = documents.find((doc: any) => doc.name === 'Government ID');
                 if (govIdDoc) {
                     govIdUri = govIdDoc.uri;
@@ -150,15 +251,23 @@ export async function signUpUser(data: SignUpData) {
             }
 
             if (documents.length > 0 || govIdUri) {
-                console.log('📄 Creating owner verification record...');
-                const ownerVerification: OwnerVerificationRecord = {
-                    userId: userRecord.id,
-                    govIdUri: govIdUri || documents[0]?.uri || '',
-                    status: 'pending',
-                    createdAt: now,
-                };
-                await db.upsert('owner_verifications', userRecord.id, ownerVerification);
-                console.log('✅ Owner verification record created');
+                console.log('📄 Creating owner verification record in Supabase...');
+                
+                // Save to Supabase owner_verifications table
+                const { error: verificationError } = await supabase
+                    .from('owner_verifications')
+                    .insert([{
+                        user_id: userRecord.id,
+                        gov_id_uri: govIdUri || documents[0]?.uri || '',
+                        status: 'pending',
+                        created_at: now,
+                    }]);
+                
+                if (verificationError) {
+                    console.error('⚠️ Error saving verification to Supabase:', verificationError);
+                } else {
+                    console.log('✅ Owner verification record created in Supabase');
+                }
             } else {
                 console.log('ℹ️ No documents provided, skipping verification record');
             }
@@ -167,7 +276,19 @@ export async function signUpUser(data: SignUpData) {
             if (data.barangay) {
                 console.log('📝 Creating owner application for barangay:', data.barangay);
                 
-                const applicationId = generateId('app');
+                // Generate a proper UUID v4 format for the application ID
+                // Format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+                const generateUUID = () => {
+                    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                        const r = Math.random() * 16 | 0;
+                        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                        return v.toString(16);
+                    });
+                };
+                
+                const applicationId = generateUUID();
+                console.log('📝 Generated application UUID:', applicationId);
+                
                 const ownerApplication: OwnerApplicationRecord = {
                     id: applicationId,
                     userId: userRecord.id,
@@ -185,41 +306,123 @@ export async function signUpUser(data: SignUpData) {
                 };
 
                 try {
-                    await db.upsert('owner_applications', applicationId, ownerApplication);
-                    console.log('✅ Owner application created');
+                    // Save owner application to Supabase
+                    const { error: applicationError } = await supabase
+                        .from('owner_applications')
+                        .insert([{
+                            id: applicationId,
+                            user_id: userRecord.id,
+                            name: data.name,
+                            email: data.email,
+                            contact_number: data.contactNumber,
+                            house_number: data.houseNumber || '',
+                            street: data.street || '',
+                            barangay: data.barangay,
+                            gov_id_uri: govIdUri,
+                            documents: documents.length > 0 ? documents : null,
+                            status: 'pending',
+                            created_by: userRecord.id,
+                            created_at: now,
+                        }]);
                     
-                    // Clear approval cache to ensure fresh data
-                    try {
-                        const { clearOwnerApprovalCache } = await import('../../utils/owner-approval');
-                        clearOwnerApprovalCache();
-                    } catch (cacheError) {
-                        // Ignore cache clearing errors
-                    }
+                    if (applicationError) {
+                        console.error('❌ Failed to create owner application in Supabase:', applicationError);
+                    } else {
+                        console.log('✅ Owner application created in Supabase');
 
-                    // Create notification for barangay officials
-                    const notificationId = generateId('brgy_notif');
-                    const brgyNotification: BrgyNotificationRecord = {
-                        id: notificationId,
-                        barangay: data.barangay,
-                        type: 'owner_application',
-                        ownerApplicationId: applicationId,
-                        ownerName: data.name,
-                        isRead: false,
-                        createdAt: now,
-                    };
-
-                    try {
-                        await db.upsert('brgy_notifications', notificationId, brgyNotification);
-                        console.log('✅ Barangay notification created');
-                    } catch (notifError) {
-                        console.error('❌ Failed to create notification:', notifError);
+                        // Create notification for barangay officials in Supabase
+                        const notificationId = generateId('brgy_notif');
+                        
+                        const { error: notifError } = await supabase
+                            .from('brgy_notifications')
+                            .insert([{
+                                id: notificationId,
+                                barangay: data.barangay,
+                                type: 'owner_application',
+                                owner_application_id: applicationId,
+                                owner_name: data.name,
+                                is_read: false,
+                                created_at: now,
+                            }]);
+                        
+                        if (notifError) {
+                            console.error('❌ Failed to create notification in Supabase:', notifError);
+                        } else {
+                            console.log('✅ Barangay notification created in Supabase');
+                        }
                     }
                 } catch (appError) {
                     console.error('❌ Failed to create owner application:', appError);
                 }
             }
         } else {
-            // Create tenant profile
+            // Generate tenant ID
+            const tenantId = generateId('tenant');
+            
+            // Prepare tenant profile for Supabase (snake_case)
+            const supabaseTenantProfile = {
+                id: tenantId, // Add missing id field
+                user_id: userRecord.id,
+                first_name: data.name.split(' ')[0] || '',
+                last_name: data.name.split(' ').slice(1).join(' ') || '',
+                contact_number: data.contactNumber,
+                email: data.email,
+                address: data.address || '',
+                gender: data.gender,
+                family_type: data.familyType,
+                emergency_contact_person: data.emergencyContactPerson,
+                emergency_contact_number: data.emergencyContactNumber,
+                preferences: {
+                    budget: { min: 0, max: 100000 },
+                    location: [],
+                    amenities: []
+                },
+                created_at: now,
+            };
+            
+            // Insert into Supabase tenants table (not tenant_profiles)
+            const { error: tenantInsertError } = await supabase
+                .from('tenants')
+                .insert([supabaseTenantProfile]);
+            
+            if (tenantInsertError) {
+                console.error('⚠️ Error saving to Supabase tenants table:', tenantInsertError);
+            } else {
+                console.log('✅ Tenant profile saved to Supabase tenants table');
+            }
+
+            // ALSO save to personal_details table so it's pre-filled
+            // Note: personal_details uses JSONB 'data' column, not separate columns
+            console.log('💾 Saving personal details from sign-up...');
+            const personalDetailsId = generateId('pd');
+            const personalDetailsData = {
+                firstName: data.name.split(' ')[0] || '',
+                lastName: data.name.split(' ').slice(1).join(' ') || '',
+                phoneNumber: data.contactNumber,
+                address: data.address || '',
+                gender: data.gender || null,
+                tenantType: data.familyType || null,
+                contactPersonEmergency: data.emergencyContactPerson || '',
+                contactNumberEmergency: data.emergencyContactNumber || '',
+            };
+            
+            const { error: personalDetailsError } = await supabase
+                .from('personal_details')
+                .insert([{
+                    id: personalDetailsId,
+                    user_id: userRecord.id,
+                    data: personalDetailsData, // Store as JSONB
+                    created_at: now,
+                    updated_at: now,
+                }]);
+            
+            if (personalDetailsError) {
+                console.error('⚠️ Error saving to personal_details table:', personalDetailsError);
+            } else {
+                console.log('✅ Personal details saved! User won\'t need to fill again.');
+            }
+            
+            // Create tenant profile for local DB (camelCase)
             const tenantProfile: TenantProfileRecord = {
                 userId: userRecord.id,
                 firstName: data.name.split(' ')[0] || '',
@@ -238,15 +441,20 @@ export async function signUpUser(data: SignUpData) {
                 },
                 createdAt: now,
             };
-            await db.upsert('tenants', userRecord.id, tenantProfile);
-            console.log('✅ Tenant profile saved with gender:', tenantProfile.gender ? `✅ ${tenantProfile.gender}` : '⚠️ No gender provided');
+            
+            // Tenant profile now stored in Supabase cloud only
+            console.log('✅ Tenant profile saved to Supabase cloud only with gender:', tenantProfile.gender ? `✅ ${tenantProfile.gender}` : '⚠️ No gender provided');
         }
 
         console.log('🎉 Sign-up completed successfully for:', data.email);
         return { 
             success: true, 
             role: data.role,
-            user: result.user,
+            user: {
+                id: userId,
+                email: data.email,
+                roles: [data.role],
+            },
             error: undefined
         };
 

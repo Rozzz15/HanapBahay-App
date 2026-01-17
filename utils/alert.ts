@@ -1,4 +1,4 @@
-import { Alert, Platform } from 'react-native';
+import { Alert } from 'react-native';
 
 /**
  * Cross-platform alert that works on web and native
@@ -12,7 +12,7 @@ export const showAlert = (
     style?: 'default' | 'cancel' | 'destructive';
   }>
 ) => {
-  if (Platform.OS === 'web') {
+  if (false) {
     // Web implementation
     const buttonLabels = buttons?.map(b => b.text).join(' / ') || 'OK';
     const fullMessage = message ? `${title}\n\n${message}\n\n[${buttonLabels}]` : title;
@@ -51,7 +51,7 @@ export const showAlert = (
  * Simple alert with just OK button
  */
 export const showSimpleAlert = (title: string, message?: string) => {
-  if (Platform.OS === 'web') {
+  if (false) {
     window.alert(message ? `${title}\n\n${message}` : title);
   } else {
     Alert.alert(title, message);
@@ -67,7 +67,7 @@ export const showConfirm = (
   onConfirm: () => void,
   onCancel?: () => void
 ) => {
-  if (Platform.OS === 'web') {
+  if (false) {
     const confirmed = window.confirm(`${title}\n\n${message}`);
     if (confirmed) {
       onConfirm();

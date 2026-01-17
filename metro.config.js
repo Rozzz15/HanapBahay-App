@@ -10,13 +10,10 @@ const isWeb = process.argv.some(arg => arg.includes('web'));
 config.resolver.platforms = ['ios', 'android', 'native', 'web'];
 config.resolver.sourceExts = ['js', 'jsx', 'json', 'ts', 'tsx', 'cjs', 'css', 'mjs'];
 
-// Fix Metro watcher ENOENT error
-config.watchFolders = [
-  path.resolve(__dirname, 'node_modules/@supabase/postgrest-js/dist/esm'),
-];
-
+// Fix Metro watcher ENOENT error - block non-existent directories
 config.resolver.blockList = [
   /node_modules\/@tybys\/wasm-util\/dist/,
+  /node_modules\/@supabase\/postgrest-js\/dist\/esm/,
 ];
 
 // Simple resolver configuration

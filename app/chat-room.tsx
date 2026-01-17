@@ -20,6 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/utils/db';
+import { supabase } from '@/utils/supabase-client';
 import { showAlert } from '@/utils/alert';
 import { ConversationRecord, MessageRecord } from '@/types';
 import PaymentMethodsDisplay from '@/components/chat/PaymentMethodsDisplay';
@@ -327,68 +328,62 @@ export default function ChatRoomNew() {
         }
     }, [conversationId, user?.id, ownerName, tenantName]);
 
-    const loadMessages = useCallback(async () => {
+    const loadMessages = useCallback(async (options?: { showLoading?: boolean }) => {
+        const showLoading = options?.showLoading ?? false;
+
         if (!conversationId || !user?.id) {
             console.log('⚠️ Missing required parameters for loadMessages:', { conversationId, userId: user?.id });
-            setLoading(false);
+            // If we don't have the required params, we can't load anything.
+            // Only stop the loader if this call was intended to show it.
+            if (showLoading) setLoading(false);
             return;
         }
 
         try {
-            setLoading(true);
-            console.log('🔄 Loading messages for conversation:', conversationId);
+            const startTime = Date.now();
+            console.log('⏱️ TENANT: Starting loadMessages...');
+            
+            // IMPORTANT: avoid toggling the full-screen loader during background refresh (polling/focus)
+            // because it unmounts the input on empty conversations and makes it impossible to type.
+            if (showLoading) setLoading(true);
 
-            // Get all messages for this conversation
-            const allMessages = await db.list('messages') as MessageRecord[];
-            if (!Array.isArray(allMessages)) {
-                console.error('❌ Invalid messages data:', allMessages);
-                setMessages([]);
-                setLoading(false);
-                return;
-            }
-
+            // OPTIMIZED: Query messages for this specific conversation only (instead of loading ALL messages)
             const normalizedConvId = String(conversationId || '').trim();
-            console.log(`🔍 Tenant: Searching for messages with conversationId: "${normalizedConvId}"`);
-            console.log(`📊 Tenant: Total messages in database: ${allMessages.length}`);
             
-            // Debug: Log all message conversationIds to see what we're working with
-            const allConvIds = allMessages.map((m: any) => ({
-                id: m.id,
-                convId: String(m.conversationId || m.conversation_id || '').trim(),
-                text: m.text?.substring(0, 30)
-            }));
-            console.log(`📊 Tenant: All message conversationIds (first 10):`, allConvIds.slice(0, 10));
+            const queryStart = Date.now();
+            console.log('⏱️ TENANT: Starting Supabase query...');
             
-            const conversationMessages = allMessages.filter((msg: MessageRecord) => {
-                if (!msg) return false;
-                const msgConvId = String(msg.conversationId || msg.conversation_id || '').trim();
-                // Try multiple matching strategies
-                const exactMatch = msgConvId === normalizedConvId;
-                const normalizedMatch = msgConvId === String(conversationId).trim();
-                const matches = exactMatch || normalizedMatch;
-                
-                if (matches) {
-                    console.log('✅ Tenant: Message matches:', {
-                        msgId: msg.id,
-                        msgConvId,
-                        expected: normalizedConvId,
-                        text: msg.text?.substring(0, 50),
-                        type: msg.type,
-                        senderId: msg.senderId || msg.sender_id
-                    });
-                } else if (msgConvId && normalizedConvId) {
-                    // Log mismatches for debugging
-                    console.log('❌ Tenant: Message mismatch:', {
-                        msgId: msg.id,
-                        msgConvId,
-                        expected: normalizedConvId,
-                        match: false
-                    });
+            // Use Supabase query to filter on the server side (much faster)
+            const { data: conversationMessages, error: messagesError } = await supabase
+                .from('messages')
+                .select('id, conversation_id, sender_id, text, type, image_uri, created_at, read_by')
+                .eq('conversation_id', normalizedConvId)
+                .order('created_at', { ascending: true });
+            
+            console.log(`⏱️ TENANT: Supabase query took ${Date.now() - queryStart}ms`);
+            
+            if (messagesError) {
+                console.error('❌ Error loading messages from Supabase:', messagesError);
+                // Fallback to old method if query fails
+                const allMessages = await db.list('messages') as MessageRecord[];
+                if (!Array.isArray(allMessages)) {
+                    console.error('❌ Invalid messages data:', allMessages);
+                    setMessages([]);
+                    if (showLoading) setLoading(false);
+                    return;
                 }
-                return matches;
-            });
-            
-            console.log(`📨 Tenant: Found ${conversationMessages.length} messages matching conversation ID`);
+                
+                const conversationMessages = allMessages.filter((msg: MessageRecord) => {
+                    if (!msg) return false;
+                    const msgConvId = String(msg.conversationId || msg.conversation_id || '').trim();
+                    return msgConvId === normalizedConvId;
+                });
+                
+                console.log(`📨 Tenant: Found ${conversationMessages.length} messages (fallback method)`);
+            } else {
+                // Successfully got messages from query
+                console.log(`✅ Tenant: Loaded ${conversationMessages?.length || 0} messages directly from Supabase query`);
+            }
 
             // Sort by creation time
             conversationMessages.sort((a: MessageRecord, b: MessageRecord) => {
@@ -419,7 +414,7 @@ export default function ChatRoomNew() {
                 console.error('📊 Available conversations:', (await db.list('conversations') || []).map((c: any) => c.id));
                 showAlert('Error', 'Conversation not found');
                 setMessages([]);
-                setLoading(false);
+                if (showLoading) setLoading(false);
                 return;
             }
             
@@ -453,8 +448,33 @@ export default function ChatRoomNew() {
                 })
                 .filter((msg): msg is NonNullable<typeof msg> => msg !== null) as Message[];
 
-            setMessages(uiMessages);
-            console.log(`✅ Loaded ${uiMessages.length} messages`);
+            // Merge with existing messages, avoiding duplicates by ID
+            setMessages(prev => {
+                const messageMap = new Map<string, Message>();
+                
+                // Add existing messages first
+                prev.forEach(msg => {
+                    if (msg && msg.id) {
+                        messageMap.set(msg.id, msg);
+                    }
+                });
+                
+                // Add/update with new messages (overwrites if ID exists)
+                uiMessages.forEach(msg => {
+                    if (msg && msg.id) {
+                        messageMap.set(msg.id, msg);
+                    }
+                });
+                
+                // Convert back to array and sort by creation time
+                return Array.from(messageMap.values()).sort((a, b) => {
+                    const dateA = new Date(a.createdAt).getTime();
+                    const dateB = new Date(b.createdAt).getTime();
+                    return dateA - dateB;
+                });
+            });
+            console.log(`✅ TENANT: Loaded ${uiMessages.length} messages`);
+            console.log(`⏱️ TENANT: TOTAL TIME = ${Date.now() - startTime}ms`);
 
             // Only scroll to bottom on initial load or if user is already at bottom
             if (isInitialLoadRef.current || isUserAtBottomRef.current) {
@@ -468,7 +488,7 @@ export default function ChatRoomNew() {
             showAlert('Error', 'Failed to load messages');
             setMessages([]); // Clear messages on error
         } finally {
-            setLoading(false);
+            if (showLoading) setLoading(false);
         }
     }, [conversationId, user?.id]);
 
@@ -478,7 +498,7 @@ export default function ChatRoomNew() {
             // Only load messages if we have the required parameters
             if (conversationId && user?.id) {
                 loadParticipantInfo();
-                loadMessages();
+                loadMessages({ showLoading: true });
             } else {
                 console.log('⚠️ Missing required parameters, setting loading to false');
                 setLoading(false);
@@ -494,10 +514,14 @@ export default function ChatRoomNew() {
         useCallback(() => {
             if (conversationId && user?.id) {
                 loadParticipantInfo(); // Refresh participant info to get latest profile photo
-                loadMessages();
                 
-                // Mark conversation as read when viewing
-                const markAsRead = async () => {
+                // Load messages asynchronously (non-blocking)
+                setTimeout(() => {
+                    loadMessages(); // background refresh (no full-screen loader)
+                }, 0);
+                
+                // Mark conversation as read in background (non-blocking)
+                setTimeout(async () => {
                     try {
                         const conv = await db.get<ConversationRecord>('conversations', String(conversationId).trim());
                         if (conv) {
@@ -516,14 +540,12 @@ export default function ChatRoomNew() {
                     } catch (error) {
                         console.error('Error marking conversation as read:', error);
                     }
-                };
+                }, 100);
                 
-                markAsRead();
-                
-                // Set up interval to check for new messages every 2 seconds
+                // Set up interval to check for new messages every 15 seconds (reduced frequency to minimize interruption)
                 const interval = setInterval(() => {
-                    loadMessages();
-                }, 2000);
+                    loadMessages(); // background refresh (no full-screen loader)
+                }, 15000);
                 
                 return () => clearInterval(interval);
             }
@@ -582,7 +604,6 @@ export default function ChatRoomNew() {
                 senderId: user.id,
                 text: '', // Empty text for image messages
                 createdAt: now,
-                readBy: [user.id],
                 type: 'image',
                 imageUri: imageAsset.uri,
                 imageWidth: imageAsset.width,
@@ -794,7 +815,6 @@ export default function ChatRoomNew() {
                 senderId: user.id,
                 text: newMessage.trim(),
                 createdAt: now,
-                readBy: [user.id], // Initialize with sender as having read the message
                 type: 'message'
             };
             
@@ -922,7 +942,7 @@ export default function ChatRoomNew() {
         const canDelete = user?.id === message.senderId;
 
         return (
-            <Animated.View key={message.id} style={[styles.messageContainer, isCurrentUser ? styles.currentUserMessageContainer : styles.otherUserMessageContainer]}>
+            <Animated.View style={[styles.messageContainer, isCurrentUser ? styles.currentUserMessageContainer : styles.otherUserMessageContainer]}>
                 {/* Show avatar for other user's messages (on the left) */}
                 {!isCurrentUser && (
                     <View style={styles.avatarLeft}>
@@ -1051,8 +1071,8 @@ export default function ChatRoomNew() {
             {/* Messages */}
             <KeyboardAvoidingView 
                 style={styles.messagesContainer}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 80}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
             >
                 {/* Sticky Payment Methods Banner */}
                 <View pointerEvents="box-none" style={styles.paymentBannerSticky}>
@@ -1102,7 +1122,11 @@ export default function ChatRoomNew() {
                                 }
                                 return true;
                             })
-                            .map((message, index) => renderMessage(message, index))
+                            .map((message, index) => (
+                                <React.Fragment key={message.id}>
+                                    {renderMessage(message, index)}
+                                </React.Fragment>
+                            ))
                     )}
                 </ScrollView>
 

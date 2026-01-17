@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, View, StyleSheet } from 'react-native';
+import { Text, View, StyleSheet, Alert } from 'react-native';
 
 // Simple toast implementation without NativeWind dependencies
 const Toast = React.forwardRef<View, React.ComponentProps<typeof View>>(
@@ -38,11 +38,28 @@ const ToastDescription = React.forwardRef<Text, React.ComponentProps<typeof Text
   }
 );
 
-// Simple toast hook
+// Toast hook with React Native Alert fallback
 const useToast = () => {
   return {
     show: (message: string) => {
       console.log('Toast:', message);
+      
+      // Extract title and description from message
+      // Format: "emoji Title. Description"
+      const parts = message.split('. ');
+      let title = parts[0] || 'Notification';
+      const description = parts.slice(1).join('. ') || '';
+      
+      // Remove emoji from title for cleaner alert
+      title = title.replace(/[^\w\s]/gi, '').trim();
+      
+      // Show native alert as toast alternative
+      Alert.alert(
+        title,
+        description,
+        [{ text: 'OK', style: 'default' }],
+        { cancelable: true }
+      );
     },
     hide: () => {
       console.log('Toast hidden');

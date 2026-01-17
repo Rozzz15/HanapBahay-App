@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, Animated, Modal } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Play, Pause, X, ChevronLeft, ChevronRight } from 'lucide-react-native';
 
@@ -18,6 +18,14 @@ export default function PropertyVideoPlayer({
   onClose, 
   initialIndex = 0 
 }: PropertyVideoPlayerProps) {
+  // Log component render with initial props
+  console.log('🎬 PropertyVideoPlayer RENDER with props:', {
+    videosLength: videos.length,
+    visible,
+    initialIndex,
+    firstVideo: videos[0]
+  });
+
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -25,13 +33,45 @@ export default function PropertyVideoPlayer({
   const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tapHintOpacity = useRef(new Animated.Value(0)).current;
 
-  // Initialize video player with current video
-  const currentVideo = videos.length > 0 && videos[currentIndex] ? videos[currentIndex] : null;
+  // Debug: Log when visible prop changes
+  useEffect(() => {
+    console.log('🎬 PropertyVideoPlayer visible changed:', visible, 'videos:', videos.length);
+  }, [visible, videos.length]);
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (visible) {
+      console.log('✅ Modal opened, resetting video player state');
+      setCurrentIndex(initialIndex);
+      setIsPlaying(false);
+      setIsLoading(true);
+      setError(null);
+    } else {
+      console.log('❌ Modal closed');
+    }
+  }, [visible, initialIndex]);
+
+  // Initialize video player with current video - use a placeholder if no videos or not visible
+  // This ensures the hook is always called with a valid string value
+  // Don't load video until modal is actually visible
+  const currentVideo = (visible && videos.length > 0 && videos[currentIndex]) ? videos[currentIndex] : '';
   
-  // Initialize video player
-  const videoPlayer = useVideoPlayer(currentVideo, (player) => {
+  // Log the current video URL
+  useEffect(() => {
+    console.log('📹 Current video URL:', currentVideo, 'visible:', visible);
+  }, [currentVideo, visible]);
+  
+  // Initialize video player - always initialize with a value (empty string as fallback)
+  // The player will only actually load when we have a valid URL and modal is visible
+  const videoPlayer = useVideoPlayer(currentVideo || '', (player) => {
     if (!player) {
       console.log('Video player not initialized');
+      return;
+    }
+
+    // Only proceed if we have a valid video URL and modal is visible
+    if (!currentVideo || !visible) {
+      console.log('No valid video URL or modal not visible, skipping player setup');
       return;
     }
 
@@ -55,6 +95,7 @@ export default function PropertyVideoPlayer({
         }
         // Auto-play when ready
         player.play();
+        setIsPlaying(true); // Update state when auto-playing
       } else if (status === 'error') {
         console.log('Video error occurred');
         setIsLoading(false);
@@ -101,37 +142,42 @@ export default function PropertyVideoPlayer({
     }
   });
 
-  // Update video when index changes
+  // Update video when index changes - only when modal is visible
   useEffect(() => {
     const loadVideo = async () => {
-      if (videoPlayer && videos.length > 0 && videos[currentIndex]) {
-        setError(null);
-        setIsLoading(true);
-        setIsPlaying(false);
-        
-        // Clear any existing timeout
+      // Only load video if modal is visible and we have valid data
+      if (!visible || !videoPlayer || videos.length === 0 || !videos[currentIndex]) {
+        console.log('Skipping video load - not visible or no video available');
+        return;
+      }
+
+      setError(null);
+      setIsLoading(true);
+      setIsPlaying(false);
+      
+      // Clear any existing timeout
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+      }
+      
+      // Set a timeout to handle loading issues
+      loadingTimeoutRef.current = setTimeout(() => {
+        if (isLoading) {
+          console.log('Video loading timeout, showing error');
+          setError('Video took too long to load. Please try again.');
+          setIsLoading(false);
+        }
+      }, 10000); // 10 second timeout
+      
+      try {
+        console.log('Loading video:', videos[currentIndex]);
+        await videoPlayer.replaceAsync(videos[currentIndex]);
+      } catch (err) {
+        console.error('Error loading video:', err);
+        setError('Failed to load video');
+        setIsLoading(false);
         if (loadingTimeoutRef.current) {
           clearTimeout(loadingTimeoutRef.current);
-        }
-        
-        // Set a timeout to handle loading issues
-        loadingTimeoutRef.current = setTimeout(() => {
-          if (isLoading) {
-            console.log('Video loading timeout, showing error');
-            setError('Video took too long to load. Please try again.');
-            setIsLoading(false);
-          }
-        }, 10000); // 10 second timeout
-        
-        try {
-          await videoPlayer.replaceAsync(videos[currentIndex]);
-        } catch (err) {
-          console.error('Error loading video:', err);
-          setError('Failed to load video');
-          setIsLoading(false);
-          if (loadingTimeoutRef.current) {
-            clearTimeout(loadingTimeoutRef.current);
-          }
         }
       }
     };
@@ -144,7 +190,7 @@ export default function PropertyVideoPlayer({
         clearTimeout(loadingTimeoutRef.current);
       }
     };
-  }, [currentIndex, videos, videoPlayer, isLoading]);
+  }, [currentIndex, videos, videoPlayer, visible]);
 
   // Reset when modal opens/closes
   useEffect(() => {
@@ -170,6 +216,26 @@ export default function PropertyVideoPlayer({
       setIsLoading(false);
     }
   }, [visible, initialIndex, videoPlayer]);
+
+  // Poll video player state to keep isPlaying in sync
+  useEffect(() => {
+    if (!visible || !videoPlayer) return;
+
+    // Poll every 500ms to sync state with actual player
+    const pollInterval = setInterval(() => {
+      try {
+        const actuallyPlaying = videoPlayer.playing;
+        if (actuallyPlaying !== isPlaying) {
+          console.log('🔄 Syncing player state: isPlaying was', isPlaying, 'but player.playing is', actuallyPlaying);
+          setIsPlaying(actuallyPlaying);
+        }
+      } catch (err) {
+        // Ignore errors during polling
+      }
+    }, 500);
+
+    return () => clearInterval(pollInterval);
+  }, [visible, videoPlayer, isPlaying]);
 
   // Animation functions for tap hint
   const showTapHint = () => {
@@ -201,9 +267,13 @@ export default function PropertyVideoPlayer({
 
     try {
       if (isPlaying) {
+        console.log('Pausing video');
         videoPlayer.pause();
+        setIsPlaying(false); // Immediately update state
       } else {
+        console.log('Playing video');
         videoPlayer.play();
+        setIsPlaying(true); // Immediately update state
         // Clear loading state when manually starting playback
         if (isLoading) {
           console.log('Manually starting playback, clearing loading state');
@@ -240,13 +310,21 @@ export default function PropertyVideoPlayer({
     }
   };
 
-  // Early return after all hooks have been called
-  if (!visible || videos.length === 0) {
-    console.log('Video player not visible or no videos:', { visible, videosLength: videos.length });
+  // Don't render anything if not visible - this should be checked early
+  // but after all hooks have been called
+  if (!visible) {
+    console.log('🎬 Modal not visible, skipping render');
     return null;
   }
 
-  console.log('Video player rendering with:', {
+  // Don't render if no videos
+  if (videos.length === 0) {
+    console.log('🎬 No videos available, skipping render');
+    return null;
+  }
+
+  // Log before rendering - this will show the actual state at render time
+  console.log('🎬 Video player rendering with:', {
     visible,
     videosLength: videos.length,
     currentIndex,
@@ -254,11 +332,18 @@ export default function PropertyVideoPlayer({
     isLoading,
     isPlaying,
     error,
-    allVideos: videos
+    allVideos: videos,
+    videoPlayerExists: !!videoPlayer
   });
 
   return (
-    <View style={styles.container}>
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.closeButton} onPress={onClose}>
@@ -283,7 +368,14 @@ export default function PropertyVideoPlayer({
               <Text style={styles.retryText}>Retry</Text>
             </TouchableOpacity>
           </View>
-        ) : videoPlayer && currentVideo ? (
+        ) : !currentVideo ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>No video available</Text>
+            <Text style={styles.errorSubtext}>
+              Please check if the video URL is valid
+            </Text>
+          </View>
+        ) : videoPlayer ? (
           <TouchableOpacity 
             style={styles.videoWrapper}
             onPress={handlePlayPause}
@@ -296,6 +388,12 @@ export default function PropertyVideoPlayer({
               contentFit="contain"
               allowsPictureInPicture={false}
             />
+            {/* Loading Indicator */}
+            {isLoading && (
+              <View style={styles.loadingOverlay}>
+                <Text style={styles.loadingText}>Loading video...</Text>
+              </View>
+            )}
             {!isLoading && !isPlaying && !error && (
               <View style={styles.playOverlay}>
                 <View style={styles.playOverlayButton}>
@@ -312,14 +410,10 @@ export default function PropertyVideoPlayer({
           </TouchableOpacity>
         ) : (
           <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>
-              {!currentVideo ? 'No video available' : 'Video player not available'}
+            <Text style={styles.errorText}>Video player not available</Text>
+            <Text style={styles.errorSubtext}>
+              Please try closing and reopening the video
             </Text>
-            {!currentVideo && (
-              <Text style={styles.errorSubtext}>
-                Please check if the video URL is valid
-              </Text>
-            )}
           </View>
         )}
       </View>
@@ -366,6 +460,7 @@ export default function PropertyVideoPlayer({
         </View>
       )}
     </View>
+    </Modal>
   );
 }
 
@@ -425,6 +520,21 @@ const styles = StyleSheet.create({
   video: {
     width: '100%',
     height: '100%',
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
   playOverlay: {
     position: 'absolute',

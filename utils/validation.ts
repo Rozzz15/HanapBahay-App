@@ -4,6 +4,19 @@ export const validateEmail = (email: string): boolean => {
   return emailRegex.test(email);
 };
 
+export const validateEmailForSignup = (email: string): { isValid: boolean; error?: string } => {
+  if (!email || email.trim() === '') {
+    return { isValid: false, error: 'Email is required' };
+  }
+  
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return { isValid: false, error: 'Invalid email format' };
+  }
+  
+  return { isValid: true };
+};
+
 export const validatePhone = (phone: string): boolean => {
   const phoneRegex = /^(\+63|0)?[0-9]{10}$/;
   return phoneRegex.test(phone.replace(/\s/g, ''));

@@ -102,6 +102,86 @@ export default function CreateListing() {
     roomCapacities: [] // Capacity per room
   });
 
+  // Auto-save draft to Supabase every time form data changes
+  useEffect(() => {
+    const saveDraft = async () => {
+      if (!user?.id) return;
+      
+      // Only save if user has started filling the form
+      const hasContent = formData.propertyType || 
+                        formData.address || 
+                        formData.description || 
+                        formData.monthlyRent;
+      
+      if (!hasContent) return;
+
+      try {
+        console.log('💾 Auto-saving listing draft...');
+        const draftId = `draft_${user.id}`;
+        
+        await db.upsert('listing_drafts', draftId, {
+          ownerid: user.id,
+          formdata: formData,
+          currentstep: currentStep,
+          lastsaved: new Date().toISOString(),
+        });
+        
+        console.log('✅ Draft saved successfully');
+      } catch (error) {
+        console.error('❌ Error saving draft:', error);
+        // Silently fail - don't interrupt user experience
+      }
+    };
+
+    // Debounce: save 2 seconds after user stops typing
+    const timeoutId = setTimeout(saveDraft, 2000);
+    return () => clearTimeout(timeoutId);
+  }, [formData, currentStep, user?.id]);
+
+  // Load draft when component mounts
+  useEffect(() => {
+    const loadDraft = async () => {
+      if (!user?.id) return;
+      
+      try {
+        console.log('📂 Loading saved draft...');
+        const draftId = `draft_${user.id}`;
+        const draft = await db.get('listing_drafts', draftId) as any;
+        
+        if (draft && draft.formdata) {
+          console.log('✅ Draft found, restoring form...');
+          setFormData(draft.formdata);
+          setCurrentStep(draft.currentstep || 1);
+          
+          // Show notification that draft was restored
+          showAlert(
+            'Draft Restored',
+            'Your previous listing draft has been restored. Continue where you left off!',
+            [{ text: 'OK' }]
+          );
+        }
+      } catch (error) {
+        console.log('ℹ️ No draft found or error loading:', error);
+        // No draft exists - this is normal for new listings
+      }
+    };
+
+    loadDraft();
+  }, [user?.id]);
+
+  // Clear draft when listing is successfully published
+  const clearDraft = async () => {
+    if (!user?.id) return;
+    
+    try {
+      const draftId = `draft_${user.id}`;
+      await db.remove('listing_drafts', draftId);
+      console.log('✅ Draft cleared after successful publish');
+    } catch (error) {
+      console.error('❌ Error clearing draft:', error);
+    }
+  };
+
   // Function to check payment methods
   const checkPaymentMethods = useCallback(async () => {
     if (!user?.id) {
@@ -482,13 +562,31 @@ export default function CreateListing() {
       const listingId = generateId('listing');
       const now = new Date().toISOString();
 
+      // Upload photos and videos to Supabase cloud storage first
+      console.log('📤 Uploading media to cloud storage...');
+      const uploadedMedia = await savePropertyMedia(
+        listingId,
+        user.id,
+        {
+          photos: formData.photos || [],
+          videos: formData.videos || [],
+          coverPhoto: formData.coverPhoto || null
+        }
+      );
+      console.log('✅ Media uploaded successfully:', {
+        photos: uploadedMedia.photos.length,
+        videos: uploadedMedia.videos.length,
+        hasCoverPhoto: !!uploadedMedia.coverPhoto
+      });
+
       const listingData = {
         id: listingId,
         userId: user.id,
         ownerUserId: user.id, // Add ownerUserId for tenant dashboard
         propertyType: formData.propertyType,
         rentalType: formData.rentalType,
-        monthlyRent: parseFloat(formData.monthlyRent),
+        monthly_rent: parseFloat(formData.monthlyRent), // Fixed: Use snake_case for database
+        monthlyRent: parseFloat(formData.monthlyRent), // Keep camelCase for compatibility
         price: parseFloat(formData.monthlyRent), // Add price field for tenant dashboard
         availabilityStatus: formData.availabilityStatus,
         leaseTerm: formData.leaseTerm,
@@ -516,9 +614,10 @@ export default function CreateListing() {
         roomCapacities: formData.roomCapacities.map(cap => parseInt(cap) || 1), // Capacity per room
         status: 'published',
         publishedAt: now,
-        coverPhoto: formData.coverPhoto || null,
-        photos: formData.photos || [],
-        videos: formData.videos || [],
+        cover_photo: uploadedMedia.coverPhoto || null, // Use uploaded cloud URL
+        coverPhoto: uploadedMedia.coverPhoto || null, // Use uploaded cloud URL
+        photos: uploadedMedia.photos || [], // Use uploaded cloud URLs
+        videos: uploadedMedia.videos || [], // Use uploaded cloud URLs
         views: 0,
         inquiries: 0,
         createdAt: now,
@@ -560,34 +659,34 @@ export default function CreateListing() {
       const { clearCache } = await import('../../utils/db');
       await clearCache();
 
-      // Save media to database
-      await savePropertyMedia(listingId, user.id, {
-        coverPhoto: formData.coverPhoto,
-        photos: formData.photos || [],
-        videos: formData.videos || []
-      });
+      // Media is already saved in published_listings table
+      // No need for separate property_photos table
+      console.log('✅ Media saved in published_listings (photos, coverPhoto, videos)');
 
       // Update owner profile with business name if provided
       if (formData.businessName && formData.businessName.trim() !== '') {
         try {
           const existingProfile = await db.get('owner_profiles', user.id) as any;
           if (existingProfile) {
+            // Remove 'id' field if it exists to avoid column error
+            const { id, ...profileWithoutId } = existingProfile;
+            
             await db.upsert('owner_profiles', user.id, {
-              ...existingProfile,
+              ...profileWithoutId,
               businessName: formData.businessName.trim(),
               contactNumber: formData.contactNumber,
-              email: formData.email,
-              updatedAt: now
+              email: formData.email
+              // No updatedAt - column doesn't exist in table
             });
             console.log('✅ Owner profile updated with business name:', formData.businessName);
           } else {
-            // Create new owner profile if it doesn't exist
+            // Create new owner profile if it doesn&apos;t exist
             await db.upsert('owner_profiles', user.id, {
-              userId: user.id,
+              // Don't include userId - it's the primary key (user_id) and is set automatically
               businessName: formData.businessName.trim(),
               contactNumber: formData.contactNumber,
-              email: formData.email,
-              createdAt: now
+              email: formData.email
+              // createdAt is set automatically with DEFAULT NOW()
             });
             console.log('✅ New owner profile created with business name:', formData.businessName);
           }
@@ -606,6 +705,9 @@ export default function CreateListing() {
         address: formData.address?.substring(0, 50) + '...',
         timestamp: now
       });
+
+      // Clear draft after successful publish
+      await clearDraft();
 
       // Show success message
       showAlert(
@@ -661,7 +763,7 @@ export default function CreateListing() {
       <View style={[professionalStyles.inputGroup, { marginTop: 8 }]}>
         <Text style={professionalStyles.inputLabel}>Property Type *</Text>
         <Text style={[professionalStyles.inputHelper, { marginBottom: 8 }]}>
-          Select the type of property you're listing
+          Select the type of property you&apos;re listing
         </Text>
         <View style={[professionalStyles.optionsGrid, { marginTop: 0, marginBottom: 0, gap: 8 }]}>
           {PROPERTY_TYPES.map((type) => (

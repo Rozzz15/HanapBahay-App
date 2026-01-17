@@ -361,12 +361,12 @@ export default function OwnerApplications() {
             
             // Read the file as base64
             const base64 = await FileSystem.readAsStringAsync(sourceUri, {
-              encoding: FileSystem.EncodingType.Base64,
+              encoding: 'base64',
             });
             
             // Write to temporary location
             await FileSystem.writeAsStringAsync(tempFileUri, base64, {
-              encoding: FileSystem.EncodingType.Base64,
+              encoding: 'base64',
             });
             
             console.log('✅ File copied successfully');
@@ -436,10 +436,10 @@ export default function OwnerApplications() {
             // Copy file to document directory
             if (sourceUri !== docFileUri) {
               const base64 = await FileSystem.readAsStringAsync(sourceUri, {
-                encoding: FileSystem.EncodingType.Base64,
+                encoding: 'base64',
               });
               await FileSystem.writeAsStringAsync(docFileUri, base64, {
-                encoding: FileSystem.EncodingType.Base64,
+                encoding: 'base64',
               });
             }
             
@@ -1055,12 +1055,11 @@ export default function OwnerApplications() {
               </View>
 
               {/* Business Documents */}
-              {((selectedApplication.documents && selectedApplication.documents.length > 0) || selectedApplication.govIdUri) && (
-                <View style={[sharedStyles.card, { marginTop: 16 }]}>
-                  <Text style={sharedStyles.sectionTitle}>Business Documents & Requirements</Text>
-                  
-                  {/* Display multiple documents if available */}
-                  {selectedApplication.documents && selectedApplication.documents.length > 0 ? (
+              <View style={[sharedStyles.card, { marginTop: 16 }]}>
+                <Text style={sharedStyles.sectionTitle}>Business Documents & Requirements</Text>
+                
+                {/* Display multiple documents if available */}
+                {selectedApplication.documents && selectedApplication.documents.length > 0 ? (
                     <View style={{ marginTop: 12, gap: 16 }}>
                       {selectedApplication.documents.map((doc, index) => (
                         <View key={doc.id || index} style={{ marginBottom: 16 }}>
@@ -1104,9 +1103,8 @@ export default function OwnerApplications() {
                         </View>
                       ))}
                     </View>
-                  ) : (
+                  ) : selectedApplication.govIdUri ? (
                     /* Fallback to govIdUri for backward compatibility */
-                    selectedApplication.govIdUri && (
                       <View style={{ marginTop: 12 }}>
                         <View style={{ 
                           flexDirection: 'row', 
@@ -1136,10 +1134,38 @@ export default function OwnerApplications() {
                           />
                         </TouchableOpacity>
                       </View>
-                    )
+                  ) : (
+                    /* No documents uploaded */
+                    <View style={{ 
+                      marginTop: 12,
+                      padding: 24,
+                      backgroundColor: '#FEF2F2',
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: '#FEE2E2',
+                      alignItems: 'center'
+                    }}>
+                      <AlertCircle size={48} color="#EF4444" />
+                      <Text style={{
+                        fontSize: 16,
+                        fontWeight: '600',
+                        color: '#991B1B',
+                        marginTop: 12,
+                        textAlign: 'center'
+                      }}>
+                        No Documents Submitted
+                      </Text>
+                      <Text style={{
+                        fontSize: 14,
+                        color: '#7F1D1D',
+                        marginTop: 8,
+                        textAlign: 'center'
+                      }}>
+                        The applicant has not uploaded any business documents or requirements yet.
+                      </Text>
+                    </View>
                   )}
                 </View>
-              )}
 
               {/* Action Buttons */}
               {selectedApplication.status === 'pending' && (

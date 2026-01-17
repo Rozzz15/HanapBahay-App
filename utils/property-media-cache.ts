@@ -1,4 +1,16 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+/**
+ * Cloud-based Property Media Cache Utility
+ * This is a drop-in replacement for property-media-cache.ts that uses Supabase instead of AsyncStorage
+ */
+
+import {
+  cacheCloudPropertyMedia,
+  getCachedCloudPropertyMedia,
+  removeCachedCloudPropertyMedia,
+  clearAllCachedCloudPropertyMedia,
+  clearExpiredCachedCloudPropertyMedia,
+  CloudPropertyMedia
+} from './cloud-storage';
 
 export interface PropertyMedia {
   coverPhoto: string | null;
@@ -6,154 +18,117 @@ export interface PropertyMedia {
   videos: string[];
 }
 
-const PROPERTY_MEDIA_CACHE_KEY = 'hb_property_media_cache';
-const CACHE_EXPIRY_TIME = 24 * 60 * 60 * 1000; // 24 hours
-
 export interface CachedPropertyMedia {
   listingId: string;
   media: PropertyMedia;
   timestamp: number;
-  userId?: string; // Track which user cached this data
+  userId?: string;
 }
 
 /**
- * Cache property media data for faster loading
+ * Cache property media data in Supabase (replaces AsyncStorage)
  */
 export const cachePropertyMedia = async (
-  listingId: string, 
+  listingId: string,
   media: PropertyMedia,
   userId?: string
 ): Promise<void> => {
   try {
-    console.log('💾 Caching property media for listing:', listingId);
+    console.log('💾 Caching property media in cloud for listing:', listingId);
     
-    const cachedData: CachedPropertyMedia = {
-      listingId,
-      media,
-      timestamp: Date.now(),
-      userId
-    };
+    await cacheCloudPropertyMedia(listingId, media, userId);
     
-    // Get existing cache
-    const existingCache = await getCachedPropertyMedia(listingId);
-    const allCachedData = existingCache ? await getAllCachedPropertyMedia() : [];
-    
-    // Update or add to cache
-    const existingIndex = allCachedData.findIndex(item => item.listingId === listingId);
-    if (existingIndex >= 0) {
-      allCachedData[existingIndex] = cachedData;
-    } else {
-      allCachedData.push(cachedData);
-    }
-    
-    // Save to AsyncStorage
-    await AsyncStorage.setItem(PROPERTY_MEDIA_CACHE_KEY, JSON.stringify(allCachedData));
-    console.log('✅ Property media cached successfully for listing:', listingId);
+    console.log('✅ Property media cached successfully in cloud for listing:', listingId);
   } catch (error) {
-    console.error('❌ Error caching property media:', error);
+    console.error('❌ Error caching property media in cloud:', error);
+    throw error;
   }
 };
 
 /**
- * Get cached property media data
+ * Get cached property media data from Supabase (replaces AsyncStorage)
  */
 export const getCachedPropertyMedia = async (listingId: string): Promise<PropertyMedia | null> => {
   try {
-    console.log('📸 Getting cached property media for listing:', listingId);
+    console.log('📸 Getting cached property media from cloud for listing:', listingId);
     
-    const cachedData = await AsyncStorage.getItem(PROPERTY_MEDIA_CACHE_KEY);
-    if (!cachedData) {
-      console.log('📸 No cached property media found');
-      return null;
+    const result = await getCachedCloudPropertyMedia(listingId);
+    
+    if (result) {
+      console.log('✅ Found valid cached property media in cloud for listing:', listingId);
+    } else {
+      console.log('📸 No cached data found in cloud for listing:', listingId);
     }
     
-    const allCachedData: CachedPropertyMedia[] = JSON.parse(cachedData);
-    const listingCache = allCachedData.find(item => item.listingId === listingId);
-    
-    if (!listingCache) {
-      console.log('📸 No cached data found for listing:', listingId);
-      return null;
-    }
-    
-    // Check if cache is expired
-    const isExpired = Date.now() - listingCache.timestamp > CACHE_EXPIRY_TIME;
-    if (isExpired) {
-      console.log('📸 Cached property media expired for listing:', listingId);
-      // Remove expired cache
-      await removeCachedPropertyMedia(listingId);
-      return null;
-    }
-    
-    console.log('✅ Found valid cached property media for listing:', listingId);
-    return listingCache.media;
+    return result;
   } catch (error) {
-    console.error('❌ Error getting cached property media:', error);
+    console.error('❌ Error getting cached property media from cloud:', error);
     return null;
   }
 };
 
 /**
- * Get all cached property media data
+ * Get all cached property media data from Supabase
+ * Note: This returns only the current user's cache in cloud storage
  */
 export const getAllCachedPropertyMedia = async (): Promise<CachedPropertyMedia[]> => {
   try {
-    const cachedData = await AsyncStorage.getItem(PROPERTY_MEDIA_CACHE_KEY);
-    if (!cachedData) {
-      return [];
-    }
+    console.log('📸 Getting all cached property media from cloud (not fully implemented for cloud)');
     
-    return JSON.parse(cachedData);
+    // For cloud storage, we don't typically need to get ALL cached media at once
+    // This is mainly used for migration purposes
+    // Return empty array as we access cache per-listing in cloud storage
+    return [];
   } catch (error) {
-    console.error('❌ Error getting all cached property media:', error);
+    console.error('❌ Error getting all cached property media from cloud:', error);
     return [];
   }
 };
 
 /**
- * Remove cached property media for a specific listing
+ * Remove cached property media for a specific listing from Supabase
  */
 export const removeCachedPropertyMedia = async (listingId: string): Promise<void> => {
   try {
-    console.log('🗑️ Removing cached property media for listing:', listingId);
+    console.log('🗑️ Removing cached property media from cloud for listing:', listingId);
     
-    const allCachedData = await getAllCachedPropertyMedia();
-    const filteredData = allCachedData.filter(item => item.listingId !== listingId);
+    await removeCachedCloudPropertyMedia(listingId);
     
-    await AsyncStorage.setItem(PROPERTY_MEDIA_CACHE_KEY, JSON.stringify(filteredData));
-    console.log('✅ Cached property media removed for listing:', listingId);
+    console.log('✅ Cached property media removed from cloud for listing:', listingId);
   } catch (error) {
-    console.error('❌ Error removing cached property media:', error);
+    console.error('❌ Error removing cached property media from cloud:', error);
+    throw error;
   }
 };
 
 /**
- * Clear all cached property media data
+ * Clear all cached property media data from Supabase
  */
 export const clearAllCachedPropertyMedia = async (): Promise<void> => {
   try {
-    console.log('🗑️ Clearing all cached property media');
-    await AsyncStorage.removeItem(PROPERTY_MEDIA_CACHE_KEY);
-    console.log('✅ All cached property media cleared');
+    console.log('🗑️ Clearing all cached property media from cloud');
+    
+    await clearAllCachedCloudPropertyMedia();
+    
+    console.log('✅ All cached property media cleared from cloud');
   } catch (error) {
-    console.error('❌ Error clearing cached property media:', error);
+    console.error('❌ Error clearing cached property media from cloud:', error);
+    throw error;
   }
 };
 
 /**
- * Clear expired cached property media
+ * Clear expired cached property media from Supabase
  */
 export const clearExpiredCachedPropertyMedia = async (): Promise<void> => {
   try {
-    console.log('🗑️ Clearing expired cached property media');
+    console.log('🗑️ Clearing expired cached property media from cloud');
     
-    const allCachedData = await getAllCachedPropertyMedia();
-    const validData = allCachedData.filter(item => 
-      Date.now() - item.timestamp <= CACHE_EXPIRY_TIME
-    );
+    await clearExpiredCachedCloudPropertyMedia();
     
-    await AsyncStorage.setItem(PROPERTY_MEDIA_CACHE_KEY, JSON.stringify(validData));
-    console.log(`✅ Cleared ${allCachedData.length - validData.length} expired cached property media`);
+    console.log('✅ Expired cached property media cleared from cloud');
   } catch (error) {
-    console.error('❌ Error clearing expired cached property media:', error);
+    console.error('❌ Error clearing expired cached property media from cloud:', error);
+    throw error;
   }
 };

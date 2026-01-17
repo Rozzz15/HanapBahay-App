@@ -1,4 +1,5 @@
 import { db, generateId } from './db';
+import { supabase } from './supabase-client';
 import { MaintenanceRequestRecord } from '../types';
 
 /**
@@ -7,7 +8,12 @@ import { MaintenanceRequestRecord } from '../types';
 export async function createMaintenanceRequest(data: {
   bookingId: string;
   propertyId: string;
+  propertyName?: string;
+  propertyAddress?: string;
   tenantId: string;
+  tenantName?: string;
+  tenantEmail?: string;
+  tenantPhone?: string;
   ownerId: string;
   title: string;
   description: string;
@@ -21,7 +27,12 @@ export async function createMaintenanceRequest(data: {
       id: generateId('maintenance'),
       bookingId: data.bookingId,
       propertyId: data.propertyId,
+      propertyName: data.propertyName,
+      propertyAddress: data.propertyAddress,
       tenantId: data.tenantId,
+      tenantName: data.tenantName,
+      tenantEmail: data.tenantEmail,
+      tenantPhone: data.tenantPhone,
       ownerId: data.ownerId,
       title: data.title,
       description: data.description,
@@ -195,3 +206,21 @@ export async function cancelMaintenanceRequest(
   }
 }
 
+/**
+ * Delete a maintenance request (owner only)
+ */
+export async function deleteMaintenanceRequest(requestId: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('maintenance_requests')
+      .delete()
+      .eq('id', requestId);
+
+    if (error) throw error;
+
+    console.log('✅ Maintenance request deleted:', requestId);
+  } catch (error) {
+    console.error('❌ Error deleting maintenance request:', error);
+    throw error;
+  }
+}

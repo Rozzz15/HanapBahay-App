@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Modal, Pressable, Platform, Alert, Share } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Line, Circle, Polyline, Path } from 'react-native-svg';
+import Svg, { Line, Path } from 'react-native-svg';
 import { useAuth } from '../../context/AuthContext';
 import { useRouter } from 'expo-router';
 import { sharedStyles, designTokens, iconBackgrounds } from '../../styles/owner-dashboard-styles';
 import { getComprehensiveAnalytics, ComprehensiveAnalytics, exportBarangayAnalytics } from '../../utils/brgy-analytics';
 import PieChart from '../../components/ui/PieChart';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import type { BookingRecord, PublishedListingRecord, OwnerApplicationRecord, DbUserRecord } from '../../types';
 import { 
   Users, 
@@ -16,18 +16,13 @@ import {
   Eye, 
   MessageSquare,
   BarChart3,
-  PieChart as PieChartIcon,
   Activity,
-  Building2,
   Target,
   Award,
-  TrendingDown,
   Clock,
-  MapPin,
   Download,
   FileText,
   RefreshCw,
-  Percent,
   ArrowUp,
   ArrowDown,
   Minus,
@@ -598,7 +593,7 @@ export default function ReportsPage() {
       console.log('✅ Analytics loaded successfully:', {
         totalProperties: data.totalProperties,
         totalBookings: data.totalBookings,
-        totalResidents: data.genderAnalytics.total,
+        totalResidents: data.tenantTypeAnalytics.totalPeople, // Use totalPeople to count actual residents (couple=2, family=1+members)
         totalOwners: data.ownerAnalytics.totalOwners,
         totalPropertyViews: data.totalViews, // ⭐ Critical: Verify views are loaded
         averageViewsPerProperty: data.averageViewsPerProperty,
@@ -857,8 +852,8 @@ export default function ReportsPage() {
       <th>Percentage</th>
     </tr>
     <tr>
-      <td>Total Tenants</td>
-      <td>${analytics.genderAnalytics.total}</td>
+      <td>Total Residents</td>
+      <td>${analytics.tenantTypeAnalytics.totalPeople}</td>
       <td>100%</td>
     </tr>
     <tr>
@@ -1402,7 +1397,7 @@ export default function ReportsPage() {
                   color: designTokens.colors.textPrimary,
                   letterSpacing: -1,
                 }}>
-                  {analytics?.genderAnalytics?.total ?? 0}
+                  {analytics?.tenantTypeAnalytics?.totalPeople ?? 0}
                 </Text>
               </View>
 
@@ -1465,7 +1460,7 @@ export default function ReportsPage() {
 
                 <View style={{ marginBottom: 16 }}>
                   <Text style={[sharedStyles.statLabel, { fontSize: 18, marginBottom: 8 }]}>
-                  Total Residents: {analytics?.genderAnalytics?.total ?? 0}
+                  Total Residents: {analytics?.tenantTypeAnalytics?.totalPeople ?? 0}
                 </Text>
                 <Text style={[sharedStyles.statSubtitle, { fontSize: 12, color: '#6B7280', marginTop: 4 }]}>
                   Only tenants with completed payments are counted as residents

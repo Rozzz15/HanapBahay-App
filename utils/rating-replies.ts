@@ -169,7 +169,6 @@ async function sendRatingReplyNotification(
       senderId: listing.userId,
       text: messageText,
       createdAt: now,
-      readBy: [listing.userId],
       type: 'message',
     };
 
@@ -250,6 +249,8 @@ export async function getRatingsForBarangay(barangayName: string): Promise<Array
   propertyAddress: string;
   tenantName?: string;
   ownerName?: string;
+  ownerId?: string;
+  ownerBusinessName?: string;
 }>> {
   try {
     const allListings = await db.list<PublishedListingRecord>('published_listings');
@@ -277,14 +278,21 @@ export async function getRatingsForBarangay(barangayName: string): Promise<Array
         const listing = barangayListings.find(l => l.id === rating.propertyId);
         let tenantName: string | undefined;
         let ownerName: string | undefined;
+        let ownerId: string | undefined;
+        let ownerBusinessName: string | undefined;
         
         try {
           const tenant = allUsers.find((u: any) => u.id === rating.userId);
           tenantName = tenant?.name || tenant?.email || 'Anonymous';
           
           if (listing?.userId) {
+            ownerId = listing.userId;
             const owner = allUsers.find((u: any) => u.id === listing.userId);
             ownerName = owner?.name || owner?.email || 'Unknown Owner';
+            
+            // Get owner profile for business name
+            const ownerProfile = await db.get('owner_profiles', listing.userId);
+            ownerBusinessName = ownerProfile?.businessName;
           }
         } catch (error) {
           console.error('Error getting user names:', error);
@@ -296,6 +304,8 @@ export async function getRatingsForBarangay(barangayName: string): Promise<Array
           propertyAddress: listing?.address || 'Unknown Address',
           tenantName: rating.isAnonymous ? 'Anonymous' : tenantName,
           ownerName: ownerName,
+          ownerId: ownerId,
+          ownerBusinessName: ownerBusinessName,
         };
       })
     );

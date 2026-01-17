@@ -226,15 +226,23 @@ export default function PaymentMethods() {
     <View style={sharedStyles.container}>
       <View style={sharedStyles.mainContent}>
         <ScrollView style={sharedStyles.scrollView}>
-          <View style={[sharedStyles.pageContainer, { padding: 16, paddingTop: 20 }]}>
-            {/* Header */}
-            <View style={[sharedStyles.pageHeader, { marginBottom: 16 }]}>
+          <View style={[sharedStyles.pageContainer, { padding: 16, paddingTop: 48 }]}>
+            {/* Header with proper spacing */}
+            <View style={[sharedStyles.pageHeader, { marginBottom: 24 }]}>
               <View style={[sharedStyles.headerLeft, { flexDirection: 'row', alignItems: 'flex-start' }]}>
-                <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 12, marginTop: 2 }}>
+                <TouchableOpacity 
+                  onPress={() => router.back()} 
+                  style={{ 
+                    marginRight: 16, 
+                    marginTop: 2,
+                    padding: 8,
+                    marginLeft: -8
+                  }}
+                >
                   <ArrowLeft size={22} color={designTokens.colors.textPrimary} />
                 </TouchableOpacity>
                 <View style={{ flex: 1 }}>
-                  <Text style={[sharedStyles.pageTitle, { fontSize: designTokens.typography.xl, marginBottom: 2, fontWeight: '700' }]}>Payment Methods</Text>
+                  <Text style={[sharedStyles.pageTitle, { fontSize: designTokens.typography.xl, marginBottom: 4, fontWeight: '700' }]}>Payment Methods</Text>
                   <Text style={[sharedStyles.pageSubtitle, { fontSize: designTokens.typography.sm }]}>Send payment to property owner</Text>
                 </View>
               </View>
@@ -265,7 +273,7 @@ export default function PaymentMethods() {
                   </View>
                 )}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <Text style={[sharedStyles.statSubtitle, { fontSize: designTokens.typography.sm }]}>First Month's Rent:</Text>
+                  <Text style={[sharedStyles.statSubtitle, { fontSize: designTokens.typography.sm }]}>First Month&apos;s Rent:</Text>
                   <Text style={[sharedStyles.statLabel, { color: designTokens.colors.primary, fontSize: designTokens.typography.sm, fontWeight: '600' }]}>
                     {formatCurrency(booking.monthlyRent)}
                   </Text>
@@ -340,7 +348,7 @@ export default function PaymentMethods() {
                   </View>
                   <Text style={[sharedStyles.emptyStateTitle, { fontSize: designTokens.typography.base }]}>No payment methods available</Text>
                   <Text style={[sharedStyles.emptyStateText, { fontSize: designTokens.typography.sm, lineHeight: 18 }]}>
-                    The property owner hasn't set up any payment methods yet. Please contact them directly.
+                    The property owner hasn&apos;t set up any payment methods yet. Please contact them directly.
                   </Text>
                 </View>
               ) : (

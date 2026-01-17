@@ -1021,6 +1021,17 @@ export default function TenantsPage() {
                               // Note: Rejected payments now have status 'pending' or 'overdue' but are marked by rejectedAt
                               if ((p as any).rejectedAt && p.status !== 'paid') return false;
                               if (p.status === 'pending' || p.status === 'overdue') {
+                                // CRITICAL: Only show pending payments within 7 days of due date for owner
+                                // This prevents overwhelming owner with future pending payments
+                                const dueDate = new Date(p.dueDate);
+                                const sevenDaysFromNow = new Date(now);
+                                sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+                                const isDueWithin7Days = dueDate <= sevenDaysFromNow;
+                                
+                                if (!isDueWithin7Days) {
+                                  return false; // Don't show future pending payments beyond 7 days
+                                }
+                                
                                 // Check if this is an advance payment (future month)
                                 const paymentMonth = new Date(p.paymentMonth + '-01');
                                 const isAdvancePayment = paymentMonth > now;
@@ -1615,7 +1626,7 @@ export default function TenantsPage() {
                               
                               // Write receipt to file using legacy API (stable and works)
                               await FileSystem.writeAsStringAsync(fullFileUri, receipt, {
-                                encoding: FileSystem.EncodingType?.UTF8 || 'utf8',
+                                encoding: 'utf8',
                               });
                               
                               // Share/download the file

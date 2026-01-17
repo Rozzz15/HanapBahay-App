@@ -1,5 +1,6 @@
 import { db } from './db';
 import { UserProfilePhotoRecord } from '../types';
+import * as FileSystem from 'expo-file-system/legacy';
 
 /**
  * Helper function to safely get userId from a photo record
@@ -102,6 +103,22 @@ export const saveUserProfilePhoto = async (
     let processedPhotoUri = photoUri.trim();
     let processedPhotoData = photoData?.trim() || photoUri.trim();
     let processedMimeType = mimeType || 'image/jpeg';
+    
+    // Convert file:// URIs to base64 data URIs for persistence
+    if (processedPhotoUri.startsWith('file://')) {
+      console.log('🔄 Converting file:// URI to base64 for persistence...');
+      try {
+        const base64 = await FileSystem.readAsStringAsync(processedPhotoUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        processedPhotoData = `data:${processedMimeType};base64,${base64}`;
+        processedPhotoUri = processedPhotoData; // Store as data URI
+        console.log('✅ Converted file:// to base64 data URI, length:', processedPhotoData.length);
+      } catch (error) {
+        console.error('❌ Failed to convert file:// URI to base64:', error);
+        throw new Error('Failed to read image file. Please try again.');
+      }
+    }
     
     // If photoUri is a data URI, extract mime type and base64 data
     if (processedPhotoUri.startsWith('data:')) {
@@ -276,9 +293,10 @@ export const loadUserProfilePhoto = async (userId: string): Promise<string | nul
         }
         
         if (rawData.startsWith('file://')) {
-          // It's a file URI, return it directly
-          console.log('✅ Returning photo data as file URI');
-          return rawData;
+          // File URIs don't persist across app restarts - warn user
+          console.warn('⚠️ Profile photo stored as file:// URI - may not persist. URI:', rawData.substring(0, 100));
+          // Return null to show fallback instead of broken image
+          return null;
         }
         
         if (rawData.startsWith('http://') || rawData.startsWith('https://')) {
@@ -295,7 +313,9 @@ export const loadUserProfilePhoto = async (userId: string): Promise<string | nul
         
         // Assume it's base64 data and construct data URI
         const mimeType = userPhoto.mimeType || 'image/jpeg';
-        const dataUri = `data:${mimeType};base64,${rawData}`;
+        // Normalize MIME type (fix "image" -> "image/jpeg")
+        const normalizedMimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+        const dataUri = `data:${normalizedMimeType};base64,${rawData}`;
         console.log('✅ Constructed data URI from photoData, length:', dataUri.length);
         return dataUri;
       }
@@ -320,9 +340,10 @@ export const loadUserProfilePhoto = async (userId: string): Promise<string | nul
         }
         
         if (rawUri.startsWith('file://')) {
-          // It's a file URI, return it directly
-          console.log('✅ Returning photo URI as file URI');
-          return rawUri;
+          // File URIs don't persist across app restarts - warn user
+          console.warn('⚠️ Profile photo stored as file:// URI - may not persist. URI:', rawUri.substring(0, 100));
+          // Return null to show fallback instead of broken image
+          return null;
         }
         
         if (rawUri.startsWith('http://') || rawUri.startsWith('https://')) {
@@ -341,7 +362,9 @@ export const loadUserProfilePhoto = async (userId: string): Promise<string | nul
         const looksLikeBase64 = /[A-Za-z0-9+/=]{100,}/.test(rawUri);
         if (looksLikeBase64) {
           const mimeType = userPhoto.mimeType || 'image/jpeg';
-          const dataUri = `data:${mimeType};base64,${rawUri}`;
+          // Normalize MIME type (fix "image" -> "image/jpeg")
+          const normalizedMimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+          const dataUri = `data:${normalizedMimeType};base64,${rawUri}`;
           console.log('✅ Constructed data URI from photoUri (looks like base64)');
           return dataUri;
         }

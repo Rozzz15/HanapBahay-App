@@ -1,59 +1,11 @@
 
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { Platform } from 'react-native'
+import AsyncStorage from '@react-native-async-storage/async-storage' // Only used for Supabase auth session storage
 import 'react-native-url-polyfill/auto'
-
-// Create a safe mock client that won't crash
-const createMockClient = () => ({
-  auth: {
-    signIn: () => Promise.resolve({ data: null, error: null }),
-    signUp: () => Promise.resolve({ data: null, error: null }),
-    signOut: () => Promise.resolve({ error: null }),
-    getSession: () => Promise.resolve({ data: { session: null }, error: null }),
-    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
-  },
-  from: () => ({
-    select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }),
-    insert: () => Promise.resolve({ data: null, error: null }),
-    update: () => Promise.resolve({ data: null, error: null }),
-    delete: () => Promise.resolve({ data: null, error: null }),
-  }),
-});
-
-// Lazy-load Supabase client to avoid Metro bundling issues
-// Use dynamic import instead of require to prevent Metro dependency resolution errors
-let createClient: any = createMockClient;
-let supabaseModuleLoaded = false;
-
-const loadSupabaseModule = async () => {
-  if (supabaseModuleLoaded || Platform.OS === 'web') {
-    return createClient;
-  }
-  
-  try {
-    const supabaseModule = await import('@supabase/supabase-js');
-    if (supabaseModule && supabaseModule.createClient) {
-      createClient = supabaseModule.createClient;
-      supabaseModuleLoaded = true;
-    }
-  } catch (error) {
-    console.warn('⚠️ Supabase module not available, using mock client. Error:', error);
-    // Keep using mock client
-  }
-  
-  return createClient;
-};
-
-// Pre-load for non-web platforms (but don't block module initialization)
-if (Platform.OS !== 'web') {
-  loadSupabaseModule().catch(() => {
-    // Silently fail - we'll use mock client
-  });
-}
+import { createClient } from '@supabase/supabase-js'
 
 // Platform-specific storage
 const getStorage = () => {
-  if (Platform.OS === 'web') {
+  if (false) {
     // Use localStorage for web
     return {
       getItem: (key: string) => {
@@ -89,36 +41,25 @@ const hasValidSupabaseConfig = SUPABASE_URL &&
   SUPABASE_ANON_KEY && 
   SUPABASE_ANON_KEY !== "your-anon-key";
 
-let supabaseInstance: any;
+// Create Supabase client
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    storage: getStorage(),
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+  global: {
+    headers: {
+      'X-Client-Info': 'supabase-js-react-native',
+    },
+  },
+});
 
-try {
-  if (hasValidSupabaseConfig && Platform.OS !== 'web') {
-    // Only create real client if we have valid config and not on web
-    supabaseInstance = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: {
-        storage: getStorage(),
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: false,
-      },
-      global: {
-        headers: {
-          'X-Client-Info': 'supabase-js-react-native',
-        },
-      },
-    });
-    console.log('✅ Supabase client initialized successfully');
-  } else {
-    // Use mock client if config is missing or on web
-    supabaseInstance = createMockClient();
-    if (!hasValidSupabaseConfig) {
-      console.warn('⚠️ Supabase credentials not configured, using mock client');
-    }
-  }
-} catch (error) {
-  console.error('❌ Error initializing Supabase client, using mock:', error);
-  supabaseInstance = createMockClient();
+if (!hasValidSupabaseConfig) {
+  console.warn('⚠️ WARNING: Supabase credentials not properly configured!');
+  console.warn('⚠️ Please set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in .env.local');
+} else {
+  console.log('✅ Supabase client initialized successfully');
 }
-
-export const supabase = supabaseInstance;
         

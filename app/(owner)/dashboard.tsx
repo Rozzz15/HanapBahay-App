@@ -4,6 +4,7 @@ import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import VideoPlayerModal from '../../components/video/VideoPlayerModal';
 import { useRouter } from 'expo-router';
+import { supabase } from '../../utils/supabase-client';
 import { useAuth } from '../../context/AuthContext';
 import { 
   getOwnerDashboardStats,
@@ -18,6 +19,7 @@ import {
   getMaintenanceRequestsByOwner,
   getPendingMaintenanceRequestsCountForOwner,
   updateMaintenanceRequestStatus,
+  deleteMaintenanceRequest,
 } from '../../utils/maintenance-requests';
 import { 
   Home, 
@@ -28,7 +30,6 @@ import {
   Eye,
   User,
   Bell,
-  Settings,
   ChevronRight,
   Users,
   Sparkles,
@@ -40,16 +41,15 @@ import {
   TrendingUp,
   BarChart3,
   PieChart,
-  ArrowUpRight,
-  ArrowDownRight,
   Download,
   X,
   Star,
   Wrench,
   Video,
-  MessageSquare
+  MessageSquare,
+  Mail,
+  Phone
 } from 'lucide-react-native';
-import { ScrollView as RNScrollView } from 'react-native';
 import { sharedStyles, designTokens, iconBackgrounds } from '../../styles/owner-dashboard-styles';
 import { showAlert } from '../../utils/alert';
 import { Image } from '../../components/ui/image';
@@ -61,7 +61,7 @@ import { getTotalActiveTenants } from '../../utils/tenant-management';
 import { exportOwnerAnalytics } from '../../utils/owner-analytics-export';
 import type { TimePeriod } from '../../utils/owner-analytics';
 import { autoDeleteOldRejectedPayments } from '../../utils/owner-payment-confirmation';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
 import * as ImagePicker from 'expo-image-picker';
@@ -245,6 +245,9 @@ export default function OwnerDashboard() {
   const [selectedVideoIndex, setSelectedVideoIndex] = useState<number | null>(null);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [isPhotoModalClosing, setIsPhotoModalClosing] = useState(false);
+  const [imageRefreshKey, setImageRefreshKey] = useState(0); // Force image reload
+  const [requestToDelete, setRequestToDelete] = useState<string | null>(null);
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
   const [showApplicationModal, setShowApplicationModal] = useState(false);
   const [applicationModalData, setApplicationModalData] = useState<{
     title: string;
@@ -288,6 +291,32 @@ export default function OwnerDashboard() {
       return () => clearTimeout(timer);
     }
   }, [showProfilePhotoModal, user?.id, loadProfilePhoto]);
+
+  // Reload profile photo when maintenance modal closes
+  useEffect(() => {
+    // Only run when modal closes (transitions from true to false)
+    if (!showMaintenanceModal && user?.id) {
+      console.log('🔄 Maintenance modal closed, forcing image reload...');
+      // Small delay to ensure modal is fully closed
+      const timer = setTimeout(() => {
+        // Force all images to refresh by incrementing key
+        setImageRefreshKey(prev => prev + 1);
+        // Reset profile photo error state
+        setProfilePhotoError(false);
+        // Reload profile photo data
+        loadProfilePhoto();
+        console.log('✅ Image refresh complete');
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [showMaintenanceModal, user?.id, loadProfilePhoto]);
+
+  // Reload profile photo when imageRefreshKey changes (after closing photo/video viewers)
+  useEffect(() => {
+    if (imageRefreshKey > 0 && user?.id) {
+      loadProfilePhoto();
+    }
+  }, [imageRefreshKey, user?.id, loadProfilePhoto]);
 
   // Check authentication and approval status
   useEffect(() => {
@@ -471,11 +500,22 @@ export default function OwnerDashboard() {
   }, [user?.id, loadRevenueData, loadStats]); // Include loadRevenueData and loadStats in dependencies
 
 
+  // Add loading guard to prevent multiple simultaneous loads
+  const isLoadingRef = useRef(false);
+  
   const loadDashboardData = useCallback(async () => {
     if (!user?.id) return;
+    
+    // Prevent multiple simultaneous loads
+    if (isLoadingRef.current) {
+      console.log('⏭️ Skipping duplicate loadDashboardData call');
+      return;
+    }
 
     try {
+      isLoadingRef.current = true;
       setLoading(true);
+      console.log('🔄 Loading dashboard data...');
       
       // Check and send payment due date notifications (runs in background)
       try {
@@ -514,6 +554,8 @@ export default function OwnerDashboard() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      isLoadingRef.current = false;
+      console.log('✅ Dashboard data loaded');
     }
   }, [user?.id]); // Only depend on user.id to prevent infinite loops
 
@@ -528,18 +570,12 @@ export default function OwnerDashboard() {
     try {
       console.log('🔍 Loading owner listings for user:', user.id);
       
-      // REFRESH MEDIA FIRST (like tenant profile pictures)
-      try {
-        const { refreshAllPropertyMedia } = await import('../../utils/media-storage');
-        await refreshAllPropertyMedia();
-        console.log('✅ Owner media refreshed successfully (like tenant profile pictures)');
-      } catch (mediaError) {
-        console.log('⚠️ Owner media refresh failed:', mediaError);
-      }
+      // REMOVED: refreshAllPropertyMedia() - This was loading ALL media files (6.9MB+) synchronously
+      // causing massive slowdown. Media is loaded on-demand when needed instead.
       
       // First, verify database storage
       const { db, generateId } = await import('../../utils/db');
-      const allPublishedListings = await db.list('published_listings');
+      const { data: allPublishedListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); }
       const ownerListings = allPublishedListings.filter((listing: any) => listing.userId === user.id);
       
       console.log('📊 Owner Listings Database Test:', {
@@ -725,7 +761,7 @@ export default function OwnerDashboard() {
       const success = await updateMaintenanceRequestStatus(requestId, status, notes);
 
       if (success) {
-        showAlert('Success', `Maintenance request ${status === 'resolved' ? 'resolved' : 'updated'} successfully`);
+        showAlert('Success', `Maintenance request ${status === 'completed' ? 'completed' : 'updated'} successfully`);
         await loadMaintenanceRequests();
         setShowMaintenanceModal(false);
         setSelectedMaintenanceRequest(null);
@@ -748,8 +784,28 @@ export default function OwnerDashboard() {
       setSelectedPhotoIndex(null);
       setCurrentPhotoIndex(0);
       setIsPhotoModalClosing(false);
+      // Force refresh images to clear cache
+      setImageRefreshKey(prev => prev + 1);
     }, 300); // Match animation duration
   }, []);
+
+  // Handle delete maintenance request
+  const handleDeleteRequest = useCallback(async () => {
+    if (!requestToDelete) return;
+
+    try {
+      await deleteMaintenanceRequest(requestToDelete);
+      // Refresh maintenance requests list
+      const requests = await getMaintenanceRequestsByOwner(user?.id || '');
+      setMaintenanceRequests(requests);
+      setShowDeleteConfirmation(false);
+      setRequestToDelete(null);
+      Alert.alert('Success', 'Maintenance request deleted successfully');
+    } catch (error) {
+      console.error('Error deleting request:', error);
+      Alert.alert('Error', 'Failed to delete maintenance request');
+    }
+  }, [requestToDelete, user?.id]);
 
   const handleViewTenantInfo = async (booking: BookingRecord) => {
     // Load tenant avatar
@@ -999,23 +1055,43 @@ export default function OwnerDashboard() {
           const selectedImage = result.assets[0];
           
           let imageUri = selectedImage.uri;
-          if (Platform.OS === 'web' && selectedImage.base64) {
-            imageUri = `data:${selectedImage.type || 'image/jpeg'};base64,${selectedImage.base64}`;
+          let imageData = selectedImage.uri; // Default to URI
+          
+          // Convert to data URI for persistence
+          if (selectedImage.base64) {
+            // Use base64 data if available (more reliable)
+            let mimeType = selectedImage.type || 'image/jpeg';
+            // Normalize MIME type (fix "image" -> "image/jpeg")
+            mimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+            imageData = `data:${mimeType};base64,${selectedImage.base64}`;
+            imageUri = imageData; // Use data URI for both
+            console.log('✅ Using base64 data from ImagePicker, length:', imageData.length);
+          } else if (Platform.OS === 'web' && selectedImage.base64) {
+            let mimeType = selectedImage.type || 'image/jpeg';
+            // Normalize MIME type (fix "image" -> "image/jpeg")
+            mimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+            imageUri = `data:${mimeType};base64,${selectedImage.base64}`;
+            imageData = imageUri;
+          } else {
+            // For file:// URIs, the saveUserProfilePhoto function will convert it
+            console.log('📁 Using file URI (will be converted to base64):', imageUri.substring(0, 50));
           }
           
           // Save to database
           try {
             setSavingPhoto(true);
-            const photoSize = imageUri.length;
+            const photoSize = imageData.length;
             const fileName = `profile_photo_${user?.id}_${Date.now()}.jpg`;
-            const mimeType = imageUri.startsWith('data:') 
-              ? imageUri.split(';')[0].split(':')[1] 
+            let mimeType = imageData.startsWith('data:') 
+              ? imageData.split(';')[0].split(':')[1] 
               : 'image/jpeg';
+            // Normalize MIME type (fix "image" -> "image/jpeg")
+            mimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
             
             await saveUserProfilePhoto(
               user?.id || '',
               imageUri,
-              imageUri,
+              imageData, // Pass base64 data or file URI (will be converted)
               fileName,
               photoSize,
               mimeType
@@ -1059,8 +1135,9 @@ export default function OwnerDashboard() {
                 backgroundColor: designTokens.colors.white,
               }}
             >
-              {profilePhoto && !profilePhotoError ? (
+              {profilePhoto && profilePhoto !== '' && profilePhoto !== 'null' && !profilePhotoError ? (
                 <Image
+                  key={`dashboard-profile-${imageRefreshKey}-${profilePhoto.substring(0, 30)}`}
                   source={{ uri: profilePhoto }}
                   style={{ width: '100%', height: '100%' }}
                   onError={() => setProfilePhotoError(true)}
@@ -1805,9 +1882,10 @@ export default function OwnerDashboard() {
                         </View>
                         
                         {/* Cover Photo */}
-                        {listing.coverPhoto && (
+                        {listing.coverPhoto && listing.coverPhoto !== '' && listing.coverPhoto !== 'null' && (
                           <View style={{ width: 50, height: 50, marginRight: designTokens.spacing.md, borderRadius: 8, overflow: 'hidden' }}>
                             <Image 
+                              key={`top-listing-${listing.id}-${imageRefreshKey}`}
                               source={{ uri: listing.coverPhoto }} 
                               style={{ width: '100%', height: '100%' }}
                               resizeMode="cover"
@@ -1896,7 +1974,7 @@ export default function OwnerDashboard() {
             </View>
           </View>
 
-          {/* Recent Maintenance Requests */}
+          {/* Recent Maintenance Requests - Show only 3 newest */}
           <View style={{ gap: designTokens.spacing.sm }}>
             {maintenanceRequests.slice(0, 3).map((request) => (
               <TouchableOpacity
@@ -1918,13 +1996,13 @@ export default function OwnerDashboard() {
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: designTokens.spacing.md }}>
                   <View style={[
                     sharedStyles.statIcon,
-                    request.status === 'resolved' ? iconBackgrounds.green :
+                    request.status === 'completed' ? iconBackgrounds.green :
                     request.status === 'in_progress' ? iconBackgrounds.blue :
                     request.priority === 'urgent' ? iconBackgrounds.red :
                     iconBackgrounds.orange,
                     { width: 40, height: 40 }
                   ]}>
-                    {request.status === 'resolved' ? (
+                    {request.status === 'completed' ? (
                       <CheckCircle size={20} color="#10B981" />
                     ) : request.status === 'in_progress' ? (
                       <Clock size={20} color="#3B82F6" />
@@ -1939,14 +2017,14 @@ export default function OwnerDashboard() {
                       </Text>
                       <View style={[
                         sharedStyles.statusBadge,
-                        request.status === 'resolved' ? { backgroundColor: designTokens.colors.successLight } :
+                        request.status === 'completed' ? { backgroundColor: designTokens.colors.successLight } :
                         request.status === 'in_progress' ? { backgroundColor: designTokens.colors.infoLight } :
                         request.priority === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
                         { backgroundColor: designTokens.colors.warningLight }
                       ]}>
                         <Text style={[
                           sharedStyles.statusText,
-                          request.status === 'resolved' ? { color: designTokens.colors.success } :
+                          request.status === 'completed' ? { color: designTokens.colors.success } :
                           request.status === 'in_progress' ? { color: designTokens.colors.info } :
                           request.priority === 'urgent' ? { color: designTokens.colors.error } :
                           { color: designTokens.colors.warning }
@@ -1987,8 +2065,8 @@ export default function OwnerDashboard() {
               <TouchableOpacity
                 style={[sharedStyles.card, { padding: designTokens.spacing.md, alignItems: 'center' }]}
                 onPress={() => {
-                  setSelectedMaintenanceRequest(null);
-                  setShowMaintenanceModal(true);
+                  // Navigate to Tenants tab where all maintenance requests can be managed
+                  router.push('/(owner)/tenants');
                 }}
                 activeOpacity={0.7}
               >
@@ -2058,9 +2136,10 @@ export default function OwnerDashboard() {
           </View>
         ) : (
           <View style={sharedStyles.card}>
-            {listings[0]?.coverPhoto && (
+            {listings[0]?.coverPhoto && listings[0].coverPhoto !== '' && listings[0].coverPhoto !== 'null' && (
               <View style={{ width: '100%', height: 180, borderRadius: designTokens.borderRadius.lg, overflow: 'hidden', marginBottom: designTokens.spacing.lg }}>
                 <Image 
+                  key={`recent-listing-${listings[0].id}-${imageRefreshKey}`}
                   source={{ uri: listings[0].coverPhoto }} 
                   style={{ width: '100%', height: '100%' }}
                   resizeMode="cover"
@@ -2084,10 +2163,6 @@ export default function OwnerDashboard() {
               <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: designTokens.colors.background, paddingHorizontal: designTokens.spacing.sm, paddingVertical: designTokens.spacing.xs, borderRadius: designTokens.borderRadius.md }}>
                 <Eye size={14} color={designTokens.colors.textMuted} />
                 <Text style={[sharedStyles.statSubtitle, { marginLeft: 4, marginBottom: 0 }]}>{listings[0]?.views || 0} views</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: designTokens.colors.background, paddingHorizontal: designTokens.spacing.sm, paddingVertical: designTokens.spacing.xs, borderRadius: designTokens.borderRadius.md }}>
-                <MessageSquare size={14} color={designTokens.colors.textMuted} />
-                <Text style={[sharedStyles.statSubtitle, { marginLeft: 4, marginBottom: 0 }]}>{listings[0]?.inquiries || 0} inquiries</Text>
               </View>
             </View>
             <View style={{ borderTopWidth: 1, borderTopColor: designTokens.colors.borderLight, paddingTop: designTokens.spacing.md }}>
@@ -2138,8 +2213,9 @@ export default function OwnerDashboard() {
               <View style={{ flexDirection: 'row', marginBottom: designTokens.spacing.lg }}>
                 {/* Cover Photo */}
                 <View style={{ width: 80, height: 80, marginRight: designTokens.spacing.md, borderRadius: 8, overflow: 'hidden' }}>
-                  {listing.coverPhoto ? (
+                  {listing.coverPhoto && listing.coverPhoto !== '' && listing.coverPhoto !== 'null' ? (
                     <Image 
+                      key={`all-listing-${listing.id}-${imageRefreshKey}`}
                       source={{ uri: listing.coverPhoto }} 
                       style={{ width: '100%', height: '100%' }}
                       resizeMode="cover"
@@ -2197,12 +2273,6 @@ export default function OwnerDashboard() {
                     <Eye size={14} color={designTokens.colors.textMuted} />
                     <Text style={[sharedStyles.statSubtitle, { marginLeft: 4 }]}>
                       {listing.views || 0} views
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Eye size={14} color={designTokens.colors.textMuted} />
-                    <Text style={[sharedStyles.statSubtitle, { marginLeft: 4 }]}>
-                      {listing.inquiries || 0} inquiries
                     </Text>
                   </View>
                 </View>
@@ -2269,7 +2339,9 @@ export default function OwnerDashboard() {
                   {booking.tenantAddress && (
                     <Text style={sharedStyles.statSubtitle}>{booking.tenantAddress}</Text>
                   )}
-                  <Text style={sharedStyles.statSubtitle}>{booking.tenantPhone}</Text>
+                  <Text style={sharedStyles.statSubtitle}>
+                    {booking.tenantPhone && booking.tenantPhone !== '+63' ? booking.tenantPhone : 'Phone: Not provided'}
+                  </Text>
                   {booking.tenantType && (
                     <Text style={sharedStyles.statSubtitle}>
                       Type: {booking.tenantType.charAt(0).toUpperCase() + booking.tenantType.slice(1)}
@@ -2792,6 +2864,7 @@ export default function OwnerDashboard() {
             }}>
               {profilePhoto && !profilePhotoError ? (
                 <Image
+                  key={`profile-photo-${imageRefreshKey}-${profilePhoto.substring(0, 50)}`}
                   source={{ uri: profilePhoto }}
                   style={{
                     width: 80,
@@ -2897,18 +2970,15 @@ export default function OwnerDashboard() {
       {/* Maintenance Request Modal */}
       <Modal
         visible={showMaintenanceModal}
-        transparent
+        transparent={false}
         animationType="slide"
+        presentationStyle="pageSheet"
         onRequestClose={() => {
           setShowMaintenanceModal(false);
           setSelectedMaintenanceRequest(null);
         }}
       >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          justifyContent: 'flex-end',
-        }}>
+        <View style={{ flex: 1, backgroundColor: designTokens.colors.background }}>
           <View style={{
             backgroundColor: designTokens.colors.white,
             borderTopLeftRadius: 24,
@@ -2942,14 +3012,14 @@ export default function OwnerDashboard() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: designTokens.spacing.sm, flexWrap: 'wrap' }}>
                       <View style={[
                         sharedStyles.statusBadge,
-                        selectedMaintenanceRequest.status === 'resolved' ? { backgroundColor: designTokens.colors.successLight } :
+                        selectedMaintenanceRequest.status === 'completed' ? { backgroundColor: designTokens.colors.successLight } :
                         selectedMaintenanceRequest.status === 'in_progress' ? { backgroundColor: designTokens.colors.infoLight } :
                         selectedMaintenanceRequest.priority === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
                         { backgroundColor: designTokens.colors.warningLight }
                       ]}>
                         <Text style={[
                           sharedStyles.statusText,
-                          selectedMaintenanceRequest.status === 'resolved' ? { color: designTokens.colors.success } :
+                          selectedMaintenanceRequest.status === 'completed' ? { color: designTokens.colors.success } :
                           selectedMaintenanceRequest.status === 'in_progress' ? { color: designTokens.colors.info } :
                           selectedMaintenanceRequest.priority === 'urgent' ? { color: designTokens.colors.error } :
                           { color: designTokens.colors.warning }
@@ -2993,6 +3063,105 @@ export default function OwnerDashboard() {
                   showsVerticalScrollIndicator={true}
                 >
                   <View style={{ gap: designTokens.spacing.lg }}>
+                    {/* Property Information */}
+                    {selectedMaintenanceRequest.propertyName && (
+                      <View style={{
+                        backgroundColor: designTokens.colors.backgroundLight,
+                        padding: designTokens.spacing.md,
+                        borderRadius: designTokens.borderRadius.md,
+                        borderLeftWidth: 3,
+                        borderLeftColor: '#f59e0b',
+                      }}>
+                        <Text style={{
+                          fontSize: designTokens.typography.sm,
+                          fontWeight: designTokens.typography.semibold as any,
+                          color: designTokens.colors.textSecondary,
+                          marginBottom: designTokens.spacing.sm,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                        }}>
+                          Property
+                        </Text>
+                        <View style={{ gap: designTokens.spacing.xs }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Home size={16} color="#f59e0b" style={{ marginRight: designTokens.spacing.xs }} />
+                            <Text style={{
+                              fontSize: designTokens.typography.base,
+                              color: designTokens.colors.textPrimary,
+                              fontWeight: '600',
+                            }}>
+                              {selectedMaintenanceRequest.propertyName}
+                            </Text>
+                          </View>
+                          {selectedMaintenanceRequest.propertyAddress && (
+                            <Text style={{
+                              fontSize: designTokens.typography.sm,
+                              color: designTokens.colors.textSecondary,
+                              marginLeft: 24,
+                            }}>
+                              📍 {selectedMaintenanceRequest.propertyAddress}
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Tenant Information */}
+                    {selectedMaintenanceRequest.tenantName && (
+                      <View style={{
+                        backgroundColor: designTokens.colors.backgroundLight,
+                        padding: designTokens.spacing.md,
+                        borderRadius: designTokens.borderRadius.md,
+                        borderLeftWidth: 3,
+                        borderLeftColor: designTokens.colors.primary,
+                      }}>
+                        <Text style={{
+                          fontSize: designTokens.typography.sm,
+                          fontWeight: designTokens.typography.semibold as any,
+                          color: designTokens.colors.textSecondary,
+                          marginBottom: designTokens.spacing.sm,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                        }}>
+                          Reported By
+                        </Text>
+                        <View style={{ gap: designTokens.spacing.xs }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <User size={16} color={designTokens.colors.primary} style={{ marginRight: designTokens.spacing.xs }} />
+                            <Text style={{
+                              fontSize: designTokens.typography.base,
+                              color: designTokens.colors.textPrimary,
+                              fontWeight: '600',
+                            }}>
+                              {selectedMaintenanceRequest.tenantName}
+                            </Text>
+                          </View>
+                          {selectedMaintenanceRequest.tenantEmail && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              <Mail size={14} color={designTokens.colors.textSecondary} style={{ marginRight: designTokens.spacing.xs }} />
+                              <Text style={{
+                                fontSize: designTokens.typography.sm,
+                                color: designTokens.colors.textSecondary,
+                              }}>
+                                {selectedMaintenanceRequest.tenantEmail}
+                              </Text>
+                            </View>
+                          )}
+                          {selectedMaintenanceRequest.tenantPhone && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              <Phone size={14} color={designTokens.colors.textSecondary} style={{ marginRight: designTokens.spacing.xs }} />
+                              <Text style={{
+                                fontSize: designTokens.typography.sm,
+                                color: designTokens.colors.textSecondary,
+                              }}>
+                                {selectedMaintenanceRequest.tenantPhone}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    )}
+
                     {/* Description */}
                     <View>
                       <Text style={{
@@ -3040,6 +3209,7 @@ export default function OwnerDashboard() {
                             }}
                           >
                             <Image
+                              key={`maintenance-photo-0-${imageRefreshKey}-${selectedMaintenanceRequest.photos[0].substring(0, 30)}`}
                               source={{ uri: selectedMaintenanceRequest.photos[0] }}
                               style={{
                                 width: '100%',
@@ -3064,6 +3234,7 @@ export default function OwnerDashboard() {
                                 }}
                               >
                                 <Image
+                                  key={`maintenance-photo-${index}-${imageRefreshKey}-${photo.substring(0, 30)}`}
                                   source={{ uri: photo }}
                                   style={{
                                     width: '100%',
@@ -3097,6 +3268,7 @@ export default function OwnerDashboard() {
                                     }}
                                   >
                                     <Image
+                                      key={`maintenance-photo-${index}-${imageRefreshKey}-${photo.substring(0, 30)}`}
                                       source={{ uri: photo }}
                                       style={{
                                         width: '100%',
@@ -3226,13 +3398,13 @@ export default function OwnerDashboard() {
                           minute: '2-digit'
                         })}
                       </Text>
-                      {selectedMaintenanceRequest.resolvedAt && (
+                      {selectedMaintenanceRequest.completedAt && (
                         <Text style={{
                           fontSize: designTokens.typography.xs,
                           color: designTokens.colors.textSecondary,
                           marginTop: designTokens.spacing.xs,
                         }}>
-                          Resolved: {new Date(selectedMaintenanceRequest.resolvedAt).toLocaleDateString('en-US', {
+                          Completed: {new Date(selectedMaintenanceRequest.completedAt).toLocaleDateString('en-US', {
                             year: 'numeric',
                             month: 'long',
                             day: 'numeric',
@@ -3253,6 +3425,35 @@ export default function OwnerDashboard() {
                   gap: designTokens.spacing.sm,
                   flexShrink: 0,
                 }}>
+                  {/* Cancelled Request Notice */}
+                  {selectedMaintenanceRequest.status === 'cancelled' && (
+                    <View style={{
+                      padding: designTokens.spacing.md,
+                      backgroundColor: designTokens.colors.error + '15',
+                      borderRadius: designTokens.borderRadius.md,
+                      borderWidth: 1,
+                      borderColor: designTokens.colors.error + '40',
+                    }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: designTokens.spacing.xs }}>
+                        <AlertCircle size={20} color={designTokens.colors.error} style={{ marginRight: designTokens.spacing.xs }} />
+                        <Text style={{
+                          fontSize: designTokens.typography.base,
+                          fontWeight: '600',
+                          color: designTokens.colors.error,
+                        }}>
+                          Request Cancelled
+                        </Text>
+                      </View>
+                      <Text style={{
+                        fontSize: designTokens.typography.sm,
+                        color: designTokens.colors.textSecondary,
+                        lineHeight: 20,
+                      }}>
+                        This maintenance request was cancelled by the tenant. No action is required.
+                      </Text>
+                    </View>
+                  )}
+
                   {selectedMaintenanceRequest.status === 'pending' && (
                     <>
                       <TouchableOpacity
@@ -3272,7 +3473,7 @@ export default function OwnerDashboard() {
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[sharedStyles.primaryButton, { backgroundColor: designTokens.colors.success }]}
-                        onPress={() => handleUpdateMaintenanceStatus(selectedMaintenanceRequest.id, 'resolved')}
+                        onPress={() => handleUpdateMaintenanceStatus(selectedMaintenanceRequest.id, 'completed')}
                         disabled={updatingMaintenanceStatus}
                         activeOpacity={0.8}
                       >
@@ -3281,7 +3482,7 @@ export default function OwnerDashboard() {
                         ) : (
                           <>
                             <CheckCircle size={18} color="#FFFFFF" />
-                            <Text style={sharedStyles.primaryButtonText}>Mark as Resolved</Text>
+                            <Text style={sharedStyles.primaryButtonText}>Mark as Completed</Text>
                           </>
                         )}
                       </TouchableOpacity>
@@ -3290,7 +3491,7 @@ export default function OwnerDashboard() {
                   {selectedMaintenanceRequest.status === 'in_progress' && (
                     <TouchableOpacity
                       style={[sharedStyles.primaryButton, { backgroundColor: designTokens.colors.success }]}
-                      onPress={() => handleUpdateMaintenanceStatus(selectedMaintenanceRequest.id, 'resolved')}
+                      onPress={() => handleUpdateMaintenanceStatus(selectedMaintenanceRequest.id, 'completed')}
                       disabled={updatingMaintenanceStatus}
                       activeOpacity={0.8}
                     >
@@ -3299,12 +3500,12 @@ export default function OwnerDashboard() {
                       ) : (
                         <>
                           <CheckCircle size={18} color="#FFFFFF" />
-                          <Text style={sharedStyles.primaryButtonText}>Mark as Resolved</Text>
+                          <Text style={sharedStyles.primaryButtonText}>Mark as Completed</Text>
                         </>
                       )}
                     </TouchableOpacity>
                   )}
-                  {selectedMaintenanceRequest.status === 'resolved' && (
+                  {selectedMaintenanceRequest.status === 'completed' && (
                     <View style={{
                       backgroundColor: designTokens.colors.successLight,
                       padding: designTokens.spacing.md,
@@ -3318,7 +3519,7 @@ export default function OwnerDashboard() {
                         color: designTokens.colors.success,
                         marginTop: designTokens.spacing.sm,
                       }}>
-                        This request has been resolved
+                        This request has been completed
                       </Text>
                     </View>
                   )}
@@ -3327,6 +3528,7 @@ export default function OwnerDashboard() {
                     onPress={() => {
                       setShowMaintenanceModal(false);
                       setSelectedMaintenanceRequest(null);
+                      setImageRefreshKey(prev => prev + 1);
                     }}
                     activeOpacity={0.8}
                   >
@@ -3385,17 +3587,21 @@ export default function OwnerDashboard() {
                           key={request.id}
                           style={[sharedStyles.card, { padding: designTokens.spacing.md }]}
                           onPress={() => setSelectedMaintenanceRequest(request)}
+                          onLongPress={() => {
+                            setRequestToDelete(request.id);
+                            setShowDeleteConfirmation(true);
+                          }}
                           activeOpacity={0.7}
                         >
                           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: designTokens.spacing.md }}>
                             <View style={[
                               sharedStyles.statIcon,
-                              request.status === 'resolved' ? iconBackgrounds.green :
+                              request.status === 'completed' ? iconBackgrounds.green :
                               request.status === 'in_progress' ? iconBackgrounds.blue :
                               request.priority === 'urgent' ? iconBackgrounds.red :
                               iconBackgrounds.orange,
                             ]}>
-                              {request.status === 'resolved' ? (
+                              {request.status === 'completed' ? (
                                 <CheckCircle size={20} color="#10B981" />
                               ) : request.status === 'in_progress' ? (
                                 <Clock size={20} color="#3B82F6" />
@@ -3451,14 +3657,95 @@ export default function OwnerDashboard() {
         visible={selectedVideoIndex !== null && selectedMaintenanceRequest !== null}
         transparent
         animationType="slide"
-        onRequestClose={() => setSelectedVideoIndex(null)}
+        onRequestClose={() => {
+          setSelectedVideoIndex(null);
+          setImageRefreshKey(prev => prev + 1);
+        }}
       >
         {selectedMaintenanceRequest && selectedVideoIndex !== null && (
           <VideoPlayerModal
             videoUri={selectedMaintenanceRequest.videos[selectedVideoIndex]}
-            onClose={() => setSelectedVideoIndex(null)}
+            onClose={() => {
+              setSelectedVideoIndex(null);
+              setImageRefreshKey(prev => prev + 1);
+            }}
           />
         )}
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        visible={showDeleteConfirmation}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteConfirmation(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: designTokens.spacing.xl,
+        }}>
+          <View style={{
+            backgroundColor: designTokens.colors.white,
+            borderRadius: designTokens.borderRadius.lg,
+            padding: designTokens.spacing.xl,
+            width: '100%',
+            maxWidth: 400,
+          }}>
+            <View style={{ alignItems: 'center', marginBottom: designTokens.spacing.lg }}>
+              <View style={{
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: designTokens.colors.error + '20',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginBottom: designTokens.spacing.md,
+              }}>
+                <AlertCircle size={32} color={designTokens.colors.error} />
+              </View>
+              <Text style={{
+                fontSize: designTokens.typography.xl,
+                fontWeight: '700',
+                color: designTokens.colors.textPrimary,
+                marginBottom: designTokens.spacing.sm,
+                textAlign: 'center',
+              }}>
+                Delete Maintenance Request?
+              </Text>
+              <Text style={{
+                fontSize: designTokens.typography.base,
+                color: designTokens.colors.textSecondary,
+                textAlign: 'center',
+                lineHeight: 22,
+              }}>
+                This action cannot be undone. The maintenance request will be permanently removed.
+              </Text>
+            </View>
+
+            <View style={{ gap: designTokens.spacing.sm }}>
+              <TouchableOpacity
+                style={[sharedStyles.primaryButton, { backgroundColor: designTokens.colors.error }]}
+                onPress={handleDeleteRequest}
+                activeOpacity={0.8}
+              >
+                <Text style={sharedStyles.primaryButtonText}>Delete Request</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={sharedStyles.secondaryButton}
+                onPress={() => {
+                  setShowDeleteConfirmation(false);
+                  setRequestToDelete(null);
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={sharedStyles.secondaryButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
 
       {/* Application Status Modal */}
@@ -3919,3 +4206,4 @@ function ApplicationStatusModal({ visible, data, onClose }: { visible: boolean; 
     </Modal>
   );
 }
+

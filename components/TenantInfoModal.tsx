@@ -214,7 +214,7 @@ const TenantInfoModal: React.FC<TenantInfoModalProps> = ({
           email: (user as any).email || tenantEmail || '',
           phone: (user as any).phone || tenantPhoneFromProfile || tenantPhone || '',
           profilePhoto, // Include the loaded photo
-          address: tenantAddress,
+          address: (user as any).address || tenantAddress || '', // Prioritize users table address
           gender,
           tenantType,
           numberOfPeople,
@@ -424,51 +424,29 @@ const TenantInfoModal: React.FC<TenantInfoModalProps> = ({
                 </View>
               </View>
 
-              <View style={styles.infoRow}>
-                <View style={styles.iconContainer}>
-                  <Ionicons name="people" size={20} color="#10B981" />
+              {/* Emergency Contact - Only show if filled */}
+              {tenantProfile.emergencyContactPerson && tenantProfile.emergencyContactPerson.trim() && (
+                <View style={styles.infoRow}>
+                  <View style={styles.iconContainer}>
+                    <Ionicons name="person" size={20} color="#EF4444" />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Emergency Contact Person</Text>
+                    <Text style={styles.infoValue}>{tenantProfile.emergencyContactPerson}</Text>
+                  </View>
                 </View>
-                <View style={styles.infoContent}>
-                  <Text style={styles.infoLabel}>Tenant Type</Text>
-                  <Text style={styles.infoValue}>
-                    {tenantProfile.tenantType 
-                      ? `${tenantProfile.tenantType.charAt(0).toUpperCase() + tenantProfile.tenantType.slice(1)}${
-                          tenantProfile.numberOfPeople && tenantProfile.numberOfPeople > 1 
-                            ? ` (${tenantProfile.numberOfPeople} people)` 
-                            : ''
-                        }`
-                      : 'Not specified'
-                    }
-                  </Text>
+              )}
+              
+              {tenantProfile.emergencyContactNumber && tenantProfile.emergencyContactNumber.trim() && (
+                <View style={styles.infoRow}>
+                  <View style={styles.iconContainer}>
+                    <Ionicons name="call" size={20} color="#EF4444" />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Emergency Contact Number</Text>
+                    <Text style={styles.infoValue}>{tenantProfile.emergencyContactNumber}</Text>
+                  </View>
                 </View>
-              </View>
-
-              {(tenantProfile.emergencyContactPerson || tenantProfile.emergencyContactNumber) && (
-                <>
-                  {tenantProfile.emergencyContactPerson && (
-                    <View style={styles.infoRow}>
-                      <View style={styles.iconContainer}>
-                        <Ionicons name="person" size={20} color="#EF4444" />
-                      </View>
-                      <View style={styles.infoContent}>
-                        <Text style={styles.infoLabel}>Emergency Contact Person</Text>
-                        <Text style={styles.infoValue}>{tenantProfile.emergencyContactPerson}</Text>
-                      </View>
-                    </View>
-                  )}
-                  
-                  {tenantProfile.emergencyContactNumber && (
-                    <View style={styles.infoRow}>
-                      <View style={styles.iconContainer}>
-                        <Ionicons name="call" size={20} color="#EF4444" />
-                      </View>
-                      <View style={styles.infoContent}>
-                        <Text style={styles.infoLabel}>Emergency Contact Number</Text>
-                        <Text style={styles.infoValue}>{tenantProfile.emergencyContactNumber}</Text>
-                      </View>
-                    </View>
-                  )}
-                </>
               )}
             </View>
 

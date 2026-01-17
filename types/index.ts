@@ -72,7 +72,7 @@ export interface DbUserRecord {
   role: 'tenant' | 'owner' | 'brgy_official';
   roles?: string[]; // Array format for AuthContext compatibility
   gender?: 'male' | 'female';
-  familyType?: 'individual' | 'family';
+  familyType?: 'individual' | 'couple' | 'family' | 'group';
   barangay?: string; // Barangay name for officials
   createdAt: string;
   updatedAt?: string; // Timestamp for when user was last updated
@@ -86,7 +86,7 @@ export interface TenantProfileRecord {
   email: string;
   address: string;
   gender?: 'male' | 'female';
-  familyType?: 'individual' | 'family';
+  familyType?: 'individual' | 'couple' | 'family' | 'group';
   emergencyContactPerson?: string;
   emergencyContactNumber?: string;
   preferences?: {
@@ -199,7 +199,7 @@ export interface MessageRecord {
   senderId: string;
   text: string;
   createdAt: string;
-  readBy: string[];
+  readBy?: string[];
   // Message type to distinguish from revenue-generating actions
   type: 'message' | 'inquiry' | 'booking_request' | 'image' | 'notification';
   // Property reference for context
@@ -271,6 +271,18 @@ export interface PublishedListingRecord {
   ownerUserId?: string;
   capacity?: number; // Maximum number of tenants/slots
   roomCapacities?: number[]; // Capacity per room
+}
+
+// Listing inquiry record (used for tracking messages/inquiries against a listing)
+export interface ListingInquiryRecord {
+  id: string;
+  listingId: string;
+  tenantId: string;
+  inquiryType: 'message' | 'booking_request' | 'contact';
+  source?: string;
+  message?: string;
+  timestamp: string;
+  createdAt?: string;
 }
 
 export interface PropertyPhotoRecord {
@@ -435,26 +447,6 @@ export interface PaymentReminderRecord {
   createdAt: string;
 }
 
-// Maintenance Request Models
-export interface MaintenanceRequestRecord {
-  id: string;
-  bookingId: string;
-  propertyId: string;
-  tenantId: string;
-  ownerId: string;
-  title: string;
-  description: string;
-  category: 'plumbing' | 'electrical' | 'appliance' | 'heating_cooling' | 'structural' | 'other';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  status: 'pending' | 'in_progress' | 'resolved' | 'cancelled';
-  photos: string[]; // Array of photo URIs
-  videos: string[]; // Array of video URIs
-  ownerNotes?: string;
-  resolvedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 // Payment Method Types
 export interface TenantPaymentMethod {
   id: string;
@@ -465,6 +457,31 @@ export interface TenantPaymentMethod {
   bankName?: string; // For bank transfers
   isDefault: boolean;
   isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Maintenance Request Models
+export interface MaintenanceRequestRecord {
+  id: string;
+  bookingId: string;
+  propertyId: string;
+  propertyName?: string; // Property name for display
+  propertyAddress?: string; // Property address for display
+  tenantId: string;
+  tenantName?: string; // Tenant's name for owner to identify
+  tenantEmail?: string; // Tenant's email
+  tenantPhone?: string; // Tenant's phone
+  ownerId: string;
+  title: string;
+  description: string;
+  category: 'plumbing' | 'electrical' | 'appliance' | 'heating_cooling' | 'structural' | 'other';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'pending' | 'in_progress' | 'resolved' | 'cancelled';
+  photos: string[]; // Array of photo URIs
+  videos: string[]; // Array of video URIs
+  ownerNotes?: string;
+  resolvedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -484,6 +501,9 @@ export interface TenantComplaintRecord {
   urgency: 'low' | 'medium' | 'high' | 'urgent';
   barangayNotes?: string; // Notes added by barangay officials
   settlementDocuments?: string[]; // Array of document URIs uploaded by barangay
+  isRead?: boolean; // Whether complaint has been read by barangay officials
+  readAt?: string; // When complaint was first read
+  readBy?: string; // User ID of barangay official who read it
   resolvedAt?: string;
   closedAt?: string;
   createdAt: string;

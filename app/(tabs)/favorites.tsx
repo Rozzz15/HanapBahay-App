@@ -16,7 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import { Heart, Home, MapPin, Star, Users, ArrowLeft } from 'lucide-react-native';
 import { getUserFavorites, toggleFavorite, isFavorite, removeFromFavorites } from '../../utils/favorites';
 import { db } from '../../utils/db';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// AsyncStorage removed - using in-memory flag instead
 import { PublishedListingRecord } from '../../types';
 import { isPublishedListingRecord } from '../../utils/db';
 import { loadPropertyMedia } from '../../utils/media-storage';
@@ -246,7 +246,8 @@ export default function FavoritesScreen() {
             style={styles.browseButton}
             onPress={async () => {
               // Set flag to skip redirect when navigating from favorites
-              await AsyncStorage.setItem('skip_booking_redirect', 'true');
+              // Set in-memory flag to skip redirect
+              (globalThis as any).__skipBookingRedirect = true;
               // Navigate to the home tab
               router.push('/(tabs)/');
             }}

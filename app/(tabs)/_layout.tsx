@@ -26,7 +26,7 @@ export default function TabLayout() {
     // Optimized unread message count loading
     const loadUnreadCount = useCallback(async () => {
         if (!user?.id) return;
-        
+
         try {
             const conversations = await db.list<ConversationRecord>('conversations');
             const tenantConversations = conversations.filter(c => c.tenantId === user.id);
@@ -42,7 +42,7 @@ export default function TabLayout() {
     // Load booking updates count for tenant
     const loadBookingUpdatesCount = useCallback(async () => {
         if (!user?.id) return;
-        
+
         try {
             const count = await getUnviewedBookingNotificationsCount(user.id);
             setBookingUpdatesCount(count);
@@ -61,7 +61,7 @@ export default function TabLayout() {
             setCheckedActiveRental(true);
             return;
         }
-        
+
         // Only check for tenants, not owners
         const isTenant = !user.roles?.includes('owner') && !user.roles?.includes('brgy_official');
         if (!isTenant) {
@@ -69,23 +69,23 @@ export default function TabLayout() {
             setCheckedActiveRental(true);
             return;
         }
-        
+
         try {
             const bookings = await getBookingsByTenant(user.id);
-            
+
             // Only show active rental dashboard for bookings that are:
             // 1. Status = 'approved' (not pending, rejected, cancelled, or completed)
             // 2. PaymentStatus = 'paid' (not pending, partial, or refunded)
             // OR have active termination countdown
             const active = bookings.find(
                 b => (b.status === 'approved' && b.paymentStatus === 'paid') ||
-                     (b.terminationInitiatedAt && b.terminationMode === 'countdown')
+                    (b.terminationInitiatedAt && b.terminationMode === 'countdown')
             );
-            
+
             const hasActive = !!active;
             setHasActiveRental(hasActive);
             setCheckedActiveRental(true);
-            
+
             if (hasActive) {
                 console.log(`✅ Tab Layout: Tenant has active rental - showing dashboard icon`);
             } else {
@@ -116,7 +116,7 @@ export default function TabLayout() {
     useEffect(() => {
         // Reset checked state when user changes
         setCheckedActiveRental(false);
-        
+
         if (user?.id) {
             loadBookingUpdatesCount();
             checkActiveRental();
@@ -126,7 +126,7 @@ export default function TabLayout() {
             setCheckedActiveRental(true);
         }
     }, [user?.id, checkActiveRental]); // Include checkActiveRental to ensure it runs
-    
+
     // Check immediately on mount
     useEffect(() => {
         if (user?.id && !checkedActiveRental) {
@@ -146,7 +146,7 @@ export default function TabLayout() {
     // Handle booking notifications when bookings tab is focused
     const handleBookingsTabFocus = useCallback(async () => {
         if (!user?.id) return;
-        
+
         try {
             await markBookingNotificationsAsViewed(user.id);
             // Refresh the count after marking as viewed
@@ -174,7 +174,7 @@ export default function TabLayout() {
         const handleBookingCompleted = async (event?: any) => {
             const eventDetail = event?.detail || {};
             console.log('🔄 Tab Layout: Booking completed event received:', eventDetail);
-            
+
             // Check if this event is for the current user
             if (eventDetail.tenantId === user.id) {
                 console.log('🔄 Tab Layout: Re-checking active rental after booking completed for current tenant');
@@ -185,9 +185,9 @@ export default function TabLayout() {
 
         // Listen for bookingCompleted events
         const removeBookingCompleted = addCustomEventListener('bookingCompleted', handleBookingCompleted);
-        
+
         console.log('👂 Tab Layout: Added bookingCompleted event listener');
-        
+
         return () => {
             removeBookingCompleted();
             console.log('🔇 Tab Layout: Removed bookingCompleted event listener');
@@ -197,7 +197,7 @@ export default function TabLayout() {
     // Show notification when user changes
     useEffect(() => {
         const previousUser = previousUserRef.current;
-        
+
         // Only show notification if user actually changed (not initial load)
         if (previousUser !== null && user !== previousUser) {
             if (user && !previousUser) {
@@ -211,7 +211,7 @@ export default function TabLayout() {
                 toast.show(notifications.operationSuccess('Account switched'));
             }
         }
-        
+
         // Update the ref with current user
         previousUserRef.current = user;
     }, [user, toast]);
@@ -233,7 +233,7 @@ export default function TabLayout() {
 
     return (
         <SafeAreaProvider>
-            <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+            <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
                 <Tabs
                     screenOptions={{
                         tabBarActiveTintColor: '#10B981',
@@ -243,15 +243,17 @@ export default function TabLayout() {
                             backgroundColor: '#ffffff',
                             borderTopWidth: 1,
                             borderTopColor: '#E5E7EB',
-                            elevation: 0,
-                            shadowOpacity: 0,
-                            height: 56, // Reduced from 60
-                            paddingBottom: 6, // Reduced from 8
-                            paddingTop: 6, // Reduced from 8
+                            elevation: 8,
+                            shadowOpacity: 0.1,
+                            shadowOffset: { width: 0, height: -2 },
+                            shadowRadius: 4,
+                            height: 60,
+                            paddingBottom: 8,
+                            paddingTop: 8,
                         },
                         tabBarShowLabel: false,
                     }}>
-            {/* Tab Navigation Order:
+                    {/* Tab Navigation Order:
                 1. Home (index) - Always visible
                 2. Message (chat) - Always visible
                 3. Tenant Main Dashboard - Only visible when tenant has active rental (approved AND paid booking)
@@ -261,132 +263,132 @@ export default function TabLayout() {
                 Without active rental: Home, Message, Bookings, Profile (4 tabs)
                 With active rental: Home, Message, Tenant Main Dashboard, Bookings, Profile (5 tabs)
             */}
-            <Tabs.Screen
-                name="index"
-                options={{
-                    tabBarIcon: ({ color, focused }) => (
-                        <Home size={22} color={focused ? '#10B981' : '#9ca3af'} />
-                    ),
-                    tabBarActiveTintColor: '#10B981',
-                }}
-            />
-            <Tabs.Screen
-                name="chat"
-                options={{
-                    tabBarIcon: ({ color, focused }) => (
-                        <View style={{ position: 'relative' }}>
-                            <MessageCircle size={22} color={focused ? '#10B981' : '#9ca3af'} />
-                            {unreadCount > 0 && (
-                                <View style={{
-                                    position: 'absolute',
-                                    top: -2,
-                                    right: -2,
-                                    backgroundColor: '#ef4444',
-                                    borderRadius: 7, // Reduced from 8
-                                    minWidth: 14, // Reduced from 16
-                                    height: 14, // Reduced from 16
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    borderWidth: 1.5, // Reduced from 2
-                                    borderColor: '#ffffff'
-                                }}>
-                                    <Text style={{
-                                        color: 'white',
-                                        fontSize: 9, // Reduced from 10
-                                        fontWeight: 'bold'
-                                    }}>
-                                        {unreadCount > 99 ? '99+' : unreadCount}
-                                    </Text>
+                    <Tabs.Screen
+                        name="index"
+                        options={{
+                            tabBarIcon: ({ color, focused }) => (
+                                <Home size={22} color={focused ? '#10B981' : '#9ca3af'} />
+                            ),
+                            tabBarActiveTintColor: '#10B981',
+                        }}
+                    />
+                    <Tabs.Screen
+                        name="chat"
+                        options={{
+                            tabBarIcon: ({ color, focused }) => (
+                                <View style={{ position: 'relative' }}>
+                                    <MessageCircle size={22} color={focused ? '#10B981' : '#9ca3af'} />
+                                    {unreadCount > 0 && (
+                                        <View style={{
+                                            position: 'absolute',
+                                            top: -2,
+                                            right: -2,
+                                            backgroundColor: '#ef4444',
+                                            borderRadius: 7, // Reduced from 8
+                                            minWidth: 14, // Reduced from 16
+                                            height: 14, // Reduced from 16
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                            borderWidth: 1.5, // Reduced from 2
+                                            borderColor: '#ffffff'
+                                        }}>
+                                            <Text style={{
+                                                color: 'white',
+                                                fontSize: 9, // Reduced from 10
+                                                fontWeight: 'bold'
+                                            }}>
+                                                {unreadCount > 99 ? '99+' : unreadCount}
+                                            </Text>
+                                        </View>
+                                    )}
                                 </View>
-                            )}
-                        </View>
-                    ),
-                    tabBarActiveTintColor: '#10B981',
-                }}
-            />
-            {/* Tenant Main Dashboard - Only show when tenant has active rental (approved AND paid booking) */}
-            <Tabs.Screen
-                name="tenant-main-dashboard"
-                options={{
-                    // Hide tab completely when tenant doesn't have active rental
-                    href: checkedActiveRental && hasActiveRental && user?.id && !user?.roles?.includes('owner') && !user?.roles?.includes('brgy_official') 
-                        ? '/(tabs)/tenant-main-dashboard' 
-                        : null,
-                    tabBarIcon: ({ color, focused }) => (
-                        <View style={{ width: 22, height: 22, justifyContent: 'center', alignItems: 'center' }}>
-                            <Building2 size={22} color={focused ? '#10B981' : '#9ca3af'} />
-                        </View>
-                    ),
-                    tabBarActiveTintColor: '#10B981',
-                }}
-            />
-            <Tabs.Screen
-                name="bookings"
-                options={{
-                    tabBarIcon: ({ color, focused }) => (
-                        <View style={{ position: 'relative' }}>
-                            <Calendar size={22} color={focused ? '#10B981' : '#9ca3af'} />
-                            {bookingUpdatesCount > 0 && (
-                                <View style={{
-                                    position: 'absolute',
-                                    top: -2,
-                                    right: -2,
-                                    backgroundColor: '#ef4444',
-                                    borderRadius: 7, // Reduced from 8
-                                    minWidth: 14, // Reduced from 16
-                                    height: 14, // Reduced from 16
-                                    justifyContent: 'center',
-                                    alignItems: 'center',
-                                    borderWidth: 1.5, // Reduced from 2
-                                    borderColor: '#ffffff'
-                                }}>
-                                    <Text style={{
-                                        color: 'white',
-                                        fontSize: 9, // Reduced from 10
-                                        fontWeight: 'bold'
-                                    }}>
-                                        {bookingUpdatesCount > 99 ? '99+' : bookingUpdatesCount}
-                                    </Text>
+                            ),
+                            tabBarActiveTintColor: '#10B981',
+                        }}
+                    />
+                    {/* Tenant Main Dashboard - Only show when tenant has active rental (approved AND paid booking) */}
+                    <Tabs.Screen
+                        name="tenant-main-dashboard"
+                        options={{
+                            // Hide tab completely when tenant doesn't have active rental
+                            href: checkedActiveRental && hasActiveRental && user?.id && !user?.roles?.includes('owner') && !user?.roles?.includes('brgy_official')
+                                ? '/(tabs)/tenant-main-dashboard'
+                                : null,
+                            tabBarIcon: ({ color, focused }) => (
+                                <View style={{ width: 22, height: 22, justifyContent: 'center', alignItems: 'center' }}>
+                                    <Building2 size={22} color={focused ? '#10B981' : '#9ca3af'} />
                                 </View>
-                            )}
-                        </View>
-                    ),
-                    tabBarActiveTintColor: '#10B981',
-                }}
-                listeners={{
-                    tabPress: handleBookingsTabFocus,
-                }}
-            />
-            <Tabs.Screen
-                name="profile"
-                options={{
-                    tabBarIcon: ({ color, focused }) => (
-                        <View style={{ width: 22, height: 22, justifyContent: 'center', alignItems: 'center' }}>
-                            <User size={22} color={focused ? '#10B981' : '#9ca3af'} />
-                        </View>
-                    ),
-                    tabBarActiveTintColor: '#10B981',
-                }}
-            />
-            {/* Hidden routes - not shown in tab bar */}
-            <Tabs.Screen
-                name="favorites"
-                options={{
-                    href: null, // Hide from tab bar
-                }}
-            />
-            <Tabs.Screen
-                name="submit-complaint"
-                options={{
-                    href: null, // Hide from tab bar - only accessible from tenant dashboard
-                }}
-            />
-            <Tabs.Screen
-                name="complaint-tracking"
-                options={{
-                    href: null, // Hide from tab bar - only accessible from tenant dashboard
-                }}
-            />
+                            ),
+                            tabBarActiveTintColor: '#10B981',
+                        }}
+                    />
+                    <Tabs.Screen
+                        name="bookings"
+                        options={{
+                            tabBarIcon: ({ color, focused }) => (
+                                <View style={{ position: 'relative' }}>
+                                    <Calendar size={22} color={focused ? '#10B981' : '#9ca3af'} />
+                                    {bookingUpdatesCount > 0 && (
+                                        <View style={{
+                                            position: 'absolute',
+                                            top: -2,
+                                            right: -2,
+                                            backgroundColor: '#ef4444',
+                                            borderRadius: 7, // Reduced from 8
+                                            minWidth: 14, // Reduced from 16
+                                            height: 14, // Reduced from 16
+                                            justifyContent: 'center',
+                                            alignItems: 'center',
+                                            borderWidth: 1.5, // Reduced from 2
+                                            borderColor: '#ffffff'
+                                        }}>
+                                            <Text style={{
+                                                color: 'white',
+                                                fontSize: 9, // Reduced from 10
+                                                fontWeight: 'bold'
+                                            }}>
+                                                {bookingUpdatesCount > 99 ? '99+' : bookingUpdatesCount}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
+                            ),
+                            tabBarActiveTintColor: '#10B981',
+                        }}
+                        listeners={{
+                            tabPress: handleBookingsTabFocus,
+                        }}
+                    />
+                    <Tabs.Screen
+                        name="profile"
+                        options={{
+                            tabBarIcon: ({ color, focused }) => (
+                                <View style={{ width: 22, height: 22, justifyContent: 'center', alignItems: 'center' }}>
+                                    <User size={22} color={focused ? '#10B981' : '#9ca3af'} />
+                                </View>
+                            ),
+                            tabBarActiveTintColor: '#10B981',
+                        }}
+                    />
+                    {/* Hidden routes - not shown in tab bar */}
+                    <Tabs.Screen
+                        name="favorites"
+                        options={{
+                            href: null, // Hide from tab bar
+                        }}
+                    />
+                    <Tabs.Screen
+                        name="submit-complaint"
+                        options={{
+                            href: null, // Hide from tab bar - only accessible from tenant dashboard
+                        }}
+                    />
+                    <Tabs.Screen
+                        name="complaint-tracking"
+                        options={{
+                            href: null, // Hide from tab bar - only accessible from tenant dashboard
+                        }}
+                    />
                 </Tabs>
             </SafeAreaView>
         </SafeAreaProvider>

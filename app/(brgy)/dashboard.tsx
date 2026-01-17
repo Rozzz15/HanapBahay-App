@@ -4,12 +4,10 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { 
-  getBrgyDashboardStats,
   type BrgyDashboardStats
 } from '../../utils/brgy-dashboard';
 import {
   getComplaintsByBarangay,
-  getNewComplaintsCount,
 } from '../../utils/tenant-complaints';
 import { 
   Users, 
@@ -20,8 +18,6 @@ import {
   CheckSquare,
   Star,
   Calendar,
-  AlertCircle,
-  TrendingUp,
   ClipboardList,
   BarChart3,
   AlertTriangle,
@@ -30,7 +26,6 @@ import {
   MessageSquare,
   Sparkles,
   ArrowRight,
-  ArrowLeft,
   XCircle,
   CheckCircle,
   Mail,
@@ -54,7 +49,8 @@ export default function BrgyDashboard() {
     totalProperties: 0,
     totalListings: 0,
     activeBookings: 0,
-    totalApprovedOwners: 0
+    totalApprovedOwners: 0,
+    newPropertiesLast7Days: 0
   });
   const [loading, setLoading] = useState(true);
   const [barangayName, setBarangayName] = useState<string>('');
@@ -99,29 +95,28 @@ export default function BrgyDashboard() {
         getComplaintsByBarangay(barangay)
       ]);
       
-      // Filter ACTIVE listings by barangay (only available, not occupied or reserved)
-      const listingsInBarangay = allListings.filter(listing => {
-        // First check if listing is active (only 'available' status)
-        const isActive = listing.availabilityStatus === 'available';
-        
+      // Filter ALL listings by barangay (for engagement trend and total count)
+      const allListingsInBarangay = allListings.filter(listing => {
         // Check barangay match
-        let isInBarangay = false;
         if (listing.barangay) {
           const listingBarangay = listing.barangay.trim().toUpperCase();
           const targetBarangay = barangay.trim().toUpperCase();
-          console.log(`🔍 Dashboard: Comparing listing barangay "${listingBarangay}" with target "${targetBarangay}"`);
-          isInBarangay = listingBarangay === targetBarangay;
+          return listingBarangay === targetBarangay;
         } else {
           // Fallback: if barangay field not set, check via user
           const listingUser = allUsers.find(u => u.id === listing.userId);
           const userBarangay = listingUser?.barangay;
           if (userBarangay) {
-            isInBarangay = userBarangay.trim().toUpperCase() === barangay.trim().toUpperCase();
+            return userBarangay.trim().toUpperCase() === barangay.trim().toUpperCase();
           }
         }
-        
-        return isActive && isInBarangay;
+        return false;
       });
+      
+      // Filter ACTIVE listings (only available for display)
+      const listingsInBarangay = allListingsInBarangay.filter(
+        listing => listing.availabilityStatus === 'available'
+      );
       
       // Get all bookings for properties in this barangay
       const approvedBookingsInBarangay = allBookings.filter(b => {
@@ -186,12 +181,36 @@ export default function BrgyDashboard() {
         }))
       });
       
+      // Calculate properties added in last 7 days for engagement trend
+      // Use ALL listings in barangay (not just available ones)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const newPropertiesLast7Days = allListingsInBarangay.filter(listing => {
+        const publishDate = new Date(listing.publishedAt || listing.createdAt);
+        return publishDate >= sevenDaysAgo;
+      }).length;
+      
+      console.log('🔍 Engagement Trend Debug:', {
+        totalListingsInBarangay: allListingsInBarangay.length,
+        availableListings: listingsInBarangay.length,
+        sevenDaysAgo: sevenDaysAgo.toISOString(),
+        newPropertiesLast7Days,
+        listingDates: allListingsInBarangay.map(l => ({
+          id: l.id.substring(0,8),
+          status: l.availabilityStatus,
+          published: l.publishedAt || l.createdAt,
+          daysAgo: Math.floor((Date.now() - new Date(l.publishedAt || l.createdAt)) / (1000*60*60*24))
+        }))
+      });
+      
       setStats({
         totalResidents,
-        totalProperties: listingsInBarangay.length,
-        totalListings: listingsInBarangay.length,
+        totalProperties: allListingsInBarangay.length, // Use all listings for total count
+        totalListings: listingsInBarangay.length, // Available listings only
         activeBookings: paidBookingsInBarangay.length,
-        totalApprovedOwners
+        totalApprovedOwners,
+        newPropertiesLast7Days, // New properties in last 7 days (all statuses)
       });
 
       // Get pending owner applications count (reusing allApplications)
@@ -613,7 +632,7 @@ export default function BrgyDashboard() {
 
     const chartSeries = [
       { label: 'Bookings', value: stats.activeBookings, color: '#6366F1', icon: Calendar },
-      { label: 'Properties', value: stats.totalListings, color: '#0EA5E9', icon: Home },
+      { label: 'Properties', value: stats.newPropertiesLast7Days || 0, color: '#0EA5E9', icon: Home },
       { label: 'Residents', value: stats.totalResidents, color: '#10B981', icon: Users },
       { label: 'Owners', value: stats.totalApprovedOwners, color: '#8B5CF6', icon: CheckSquare },
     ];

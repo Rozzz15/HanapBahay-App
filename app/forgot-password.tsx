@@ -1,23 +1,9 @@
 import { useRouter } from 'expo-router';
 import { View, ScrollView, Pressable, TextInput, StyleSheet, Dimensions, Text, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { VStack } from '@/components/ui/vstack';
-import { HStack } from '@/components/ui/hstack';
-import {
-    FormControl,
-    FormControlError,
-    FormControlErrorText,
-    FormControlErrorIcon,
-    FormControlLabel,
-    FormControlLabelText,
-} from "@/components/ui/form-control"
-import { Input, InputField } from '@/components/ui/input';
-import { AlertCircleIcon, Icon, ChevronLeftIcon, MailIcon } from "@/components/ui/icon"
 import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { InteractiveButton } from '@/components/buttons';
 import { useToast } from "@/components/ui/toast";
-import { notifications, createNotification } from "@/utils";
 import { forgotPassword } from '@/api/auth/forgot-password';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -132,7 +118,7 @@ export default function ForgotPasswordScreen() {
                             </View>
                             <Text style={styles.headerTitle}>Check Your Email</Text>
                             <Text style={styles.headerSubtitle}>
-                                We've sent reset instructions to {email}
+                                We&apos;ve sent reset instructions to {email}
                             </Text>
                         </View>
                     </View>
@@ -150,7 +136,7 @@ export default function ForgotPasswordScreen() {
                             </Text>
                             
                             <Text style={styles.successDescription}>
-                                We've sent password reset instructions to your email address. 
+                                We&apos;ve sent password reset instructions to your email address. 
                                 Please check your inbox and follow the link to reset your password.
                             </Text>
 
@@ -226,7 +212,7 @@ export default function ForgotPasswordScreen() {
                         </View>
                         <Text style={styles.headerTitle}>Forgot Password?</Text>
                         <Text style={styles.headerSubtitle}>
-                            No worries! Enter your email and we'll send you reset instructions.
+                            No worries! Enter your email and we&apos;ll send you reset instructions.
                         </Text>
                     </View>
                 </View>

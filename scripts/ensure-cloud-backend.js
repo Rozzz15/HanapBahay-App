@@ -69,3 +69,4 @@ if (needsUpdate) {
 console.log('📱 When you build the APK, it will use the cloud backend.');
 console.log('   Build command: cd android && .\\gradlew assembleRelease\n');
 
+

@@ -2,9 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { getAuthUser, clearAuthUser, clearAuthSession } from '../utils/auth-user';
 import { supabase } from '../utils/supabase-client';
 import { useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { dispatchCustomEvent } from '../utils/custom-events';
-import { db } from '../utils/db';
 import { isOwnerApproved } from '../utils/owner-approval';
 
 interface AuthUser {
@@ -23,7 +21,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
   redirectOwnerBasedOnListings: (ownerId: string) => Promise<void>;
-  redirectTenantToTabs: (tenantId?: string) => Promise<void>;
+  redirectTenantToTabs: () => Promise<void>;
   redirectBrgyOfficial: () => Promise<void>;
 }
 
@@ -48,11 +46,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           permissions: authUser.permissions || [],
           name: authUser.name,
           email: authUser.email,
-          isOwnerApproved: (authUser as any).isOwnerApproved
+          isOwnerApproved: authUser.isOwnerApproved
         };
         
-        // Reduced logging for performance
-        // console.log('🔍 Auth user ID debug:', { originalId: authUser.id, finalId: userWithFallbacks.id });
+        console.log('🔍 Auth user ID debug:', {
+          originalId: authUser.id,
+          fallbackId: `user-${Date.now()}`,
+          finalId: userWithFallbacks.id,
+          hasOriginalId: !!authUser.id
+        });
         
         // Only update user if it's actually different to prevent infinite loops
         setUser(prevUser => {
@@ -69,42 +71,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           roles: userWithFallbacks.roles 
         });
         
-        // Refresh property media for tenant accounts - run in background to not block login
+        // Refresh property media for tenant accounts
         if (userWithFallbacks.roles.includes('tenant')) {
-          // Run heavy operations in background without blocking
-          (async () => {
+          console.log('🔄 Tenant logged in - refreshing property media and profile photo...');
+          try {
+            // Clear expired cache first
             try {
-              console.log('🔄 Tenant logged in - refreshing property media and profile photo...');
-              // Clear expired cache first
-              try {
-                const { clearExpiredCachedPropertyMedia } = await import('../utils/property-media-cache');
-                await clearExpiredCachedPropertyMedia();
-                console.log('✅ Cleared expired property media cache');
-              } catch (cacheError) {
-                console.log('⚠️ Could not clear expired cache:', cacheError);
-              }
-              
-              const { refreshAllPropertyMedia } = await import('../utils/media-storage');
-              await refreshAllPropertyMedia();
-              console.log('✅ Property media refreshed for tenant');
-              
-              // Dispatch property media refreshed event
-              dispatchCustomEvent('propertyMediaRefreshed', { 
-                userId: userWithFallbacks.id, 
-                timestamp: new Date().toISOString() 
-              });
+              const { clearExpiredCachedPropertyMedia } = await import('../utils/property-media-cache');
+              await clearExpiredCachedPropertyMedia();
+              console.log('✅ Cleared expired property media cache');
+            } catch (cacheError) {
+              console.log('⚠️ Could not clear expired cache:', cacheError);
+            }
+            
+            const { refreshAllPropertyMedia } = await import('../utils/media-storage');
+            await refreshAllPropertyMedia();
+            console.log('✅ Property media refreshed for tenant');
+            
+            // Dispatch property media refreshed event
+            dispatchCustomEvent('propertyMediaRefreshed', { 
+              userId: userWithFallbacks.id, 
+              timestamp: new Date().toISOString() 
+            });
 
-              // Also dispatch individual media loaded events for each listing
+            // Fetch listings from Supabase and dispatch media loaded events
+            // This is done in the background to avoid blocking the auth flow
+            (async () => {
               try {
-                const publishedListings = await db.list('published_listings');
+                const { data: publishedListings, error } = await supabase
+                  .from('published_listings')
+                  .select('id');
+                
+                if (error) {
+                  console.error('⚠️ Error fetching listings from Supabase:', error);
+                  return;
+                }
+                
+                if (!publishedListings || publishedListings.length === 0) {
+                  console.log('ℹ️ No published listings found');
+                  return;
+                }
+                
                 for (const listing of publishedListings) {
                   try {
-                    const listingRecord = listing as any;
                     const { loadPropertyMediaFromStorage } = await import('../utils/media-storage');
-                    const storedMedia = await loadPropertyMediaFromStorage(listingRecord.id);
+                    const storedMedia = await loadPropertyMediaFromStorage(listing.id);
                     if (storedMedia && storedMedia.coverPhoto) {
                       dispatchCustomEvent('propertyMediaLoaded', {
-                        listingId: listingRecord.id,
+                        listingId: listing.id,
                         userId: userWithFallbacks.id,
                         coverPhoto: storedMedia.coverPhoto,
                         photos: storedMedia.photos,
@@ -112,161 +126,158 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                       });
                     }
                   } catch (listingError) {
-                    const listingRecord = listing as any;
-                    console.log('⚠️ Error loading media for listing:', listingRecord.id, listingError);
+                    console.log('⚠️ Error loading media for listing:', listing.id, listingError);
                   }
                 }
                 console.log('✅ Dispatched property media loaded events for all listings (tenant)');
               } catch (mediaEventError) {
                 console.log('⚠️ Could not dispatch property media loaded events (tenant):', mediaEventError);
               }
+            })();
 
-              // Also refresh tenant profile photo
-              try {
-                const { loadUserProfilePhoto, migratePhotoRecords } = await import('../utils/user-profile-photos');
-                
-                // Run migration first to fix any data issues
-                await migratePhotoRecords();
-                
-                const profilePhoto = await loadUserProfilePhoto(userWithFallbacks.id);
-                if (profilePhoto) {
-                  console.log('✅ Tenant profile photo loaded from database');
-                  // Dispatch event to update profile photo in UI
-                  dispatchCustomEvent('profilePhotoLoaded', { 
-                    userId: userWithFallbacks.id, 
-                    photoUri: profilePhoto 
-                  });
-                } else {
-                  console.log('📸 No profile photo found for tenant:', userWithFallbacks.id);
-                }
-              } catch (photoError) {
-                console.error('❌ Failed to refresh tenant profile photo:', photoError);
+            // Also refresh tenant profile photo
+            try {
+              const { loadUserProfilePhoto, migratePhotoRecords } = await import('../utils/user-profile-photos');
+              
+              // Run migration first to fix any data issues
+              await migratePhotoRecords();
+              
+              const profilePhoto = await loadUserProfilePhoto(userWithFallbacks.id);
+              if (profilePhoto) {
+                console.log('✅ Tenant profile photo loaded from database');
+                // Dispatch event to update profile photo in UI
+                dispatchCustomEvent('profilePhotoLoaded', { 
+                  userId: userWithFallbacks.id, 
+                  photoUri: profilePhoto 
+                });
+              } else {
+                console.log('📸 No profile photo found for tenant:', userWithFallbacks.id);
               }
-            } catch (error) {
-              console.error('❌ Failed to refresh property media:', error);
+            } catch (photoError) {
+              console.error('❌ Failed to refresh tenant profile photo:', photoError);
             }
-          })();
+          } catch (error) {
+            console.error('❌ Failed to refresh property media:', error);
+          }
         }
         
-        // Refresh property media for owner accounts - run in background to not block login
+        // Refresh property media for owner accounts
         if (userWithFallbacks.roles.includes('owner')) {
-          (async () => {
+          console.log('🔄 Owner logged in - refreshing property media and profile photo...');
+          try {
+            const { refreshAllPropertyMedia } = await import('../utils/media-storage');
+            await refreshAllPropertyMedia();
+            console.log('✅ Property media refreshed for owner');
+            
+            // Also refresh owner profile photo
             try {
-              console.log('🔄 Owner logged in - refreshing property media and profile photo...');
-              const { refreshAllPropertyMedia } = await import('../utils/media-storage');
-              await refreshAllPropertyMedia();
-              console.log('✅ Property media refreshed for owner');
+              const { loadUserProfilePhoto, migratePhotoRecords } = await import('../utils/user-profile-photos');
               
-              // Also refresh owner profile photo
-              try {
-                const { loadUserProfilePhoto, migratePhotoRecords } = await import('../utils/user-profile-photos');
-                
-                // Run migration first to fix any data issues
-                await migratePhotoRecords();
-                
-                const profilePhoto = await loadUserProfilePhoto(userWithFallbacks.id);
-                if (profilePhoto) {
-                  console.log('✅ Owner profile photo loaded from database');
-                  // Dispatch event to update profile photo in UI
-                  dispatchCustomEvent('profilePhotoLoaded', { 
-                    userId: userWithFallbacks.id, 
-                    photoUri: profilePhoto 
-                  });
-                } else {
-                  console.log('📸 No profile photo found for owner:', userWithFallbacks.id);
-                }
-              } catch (photoError) {
-                console.error('❌ Failed to refresh owner profile photo:', photoError);
+              // Run migration first to fix any data issues
+              await migratePhotoRecords();
+              
+              const profilePhoto = await loadUserProfilePhoto(userWithFallbacks.id);
+              if (profilePhoto) {
+                console.log('✅ Owner profile photo loaded from database');
+                // Dispatch event to update profile photo in UI
+                dispatchCustomEvent('profilePhotoLoaded', { 
+                  userId: userWithFallbacks.id, 
+                  photoUri: profilePhoto 
+                });
+              } else {
+                console.log('📸 No profile photo found for owner:', userWithFallbacks.id);
               }
-            } catch (error) {
-              console.error('❌ Failed to refresh property media:', error);
+            } catch (photoError) {
+              console.error('❌ Failed to refresh owner profile photo:', photoError);
             }
-          })();
+          } catch (error) {
+            console.error('❌ Failed to refresh property media:', error);
+          }
         }
       } else {
         // No authenticated user - user needs to login
+        console.log('🔧 No auth user found - user needs to login');
         setUser(prevUser => prevUser === null ? prevUser : null);
+        console.log('✅ User is not authenticated - showing login screen');
       }
     } catch (error) {
       console.error('Error refreshing user:', error);
+      
       // On error, set user to null so they can login
+      console.log('🔧 Error occurred, user needs to login');
       setUser(prevUser => prevUser === null ? prevUser : null);
+      console.log('✅ User is not authenticated due to error - showing login screen');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const redirectTenantToTabs = async (tenantId?: string) => {
+  const redirectTenantToTabs = async () => {
     try {
-      console.log('🏠 Redirecting tenant - checking for active booking...');
-      
-      // Get tenant ID from parameter, user state, or directly from auth
-      let userId = tenantId;
-      if (!userId) {
-        userId = user?.id;
-      }
-      if (!userId) {
-        // If still no userId, get it directly from auth storage
-        try {
-          const authUser = await getAuthUser();
-          userId = authUser?.id;
-        } catch (authError) {
-          console.warn('⚠️ Could not get userId from auth storage:', authError);
-        }
+      console.log('🏠 Redirecting tenant to tabs layout');
+      // Ensure we dismiss any modals before redirecting
+      if (router.canDismiss()) {
+        router.dismissAll();
       }
       
-      // Check if tenant has an active booking (approved and paid)
-      if (userId) {
-        try {
-          const { getBookingsByTenant } = await import('../utils/booking');
-          const bookings = await getBookingsByTenant(userId);
-          const activeBooking = bookings.find(
-            b => (b.status === 'approved' && b.paymentStatus === 'paid') ||
-                 (b.terminationInitiatedAt && b.terminationMode === 'countdown')
-          );
-          
-          if (activeBooking) {
-            console.log('✅ Tenant has active booking, redirecting to main dashboard');
-            router.replace('/(tabs)/tenant-main-dashboard');
-            return;
-          }
-        } catch (bookingError) {
-          console.error('❌ Error checking for active booking:', bookingError);
-          // Continue to property browsing dashboard on error
-        }
-      }
-      
-      console.log('🏠 Redirecting tenant to property browsing dashboard');
-      router.replace('/(tabs)');
+      // Delay to ensure modal is closed
+      setTimeout(() => {
+        router.replace('/(tabs)');
+      }, 100);
     } catch (error) {
       console.error('❌ Error redirecting tenant:', error);
       // Fallback redirect
-      router.replace('/(tabs)');
+      try {
+        if (router.canDismiss()) {
+          router.dismissAll();
+        }
+        setTimeout(() => {
+          router.replace('/(tabs)');
+        }, 100);
+      } catch (fallbackError) {
+        // Last resort
+        router.replace('/(tabs)');
+      }
     }
   };
 
   const redirectOwnerBasedOnListings = async (ownerId: string) => {
     try {
       console.log('🔍 Owner redirection - always going to dashboard:', ownerId);
-      // Don't refresh user here - it's already refreshed in SignUpModal
-      // Refresh user in background only if needed, don't block redirect
-      // refreshUser().catch(err => console.log('Background user refresh:', err));
+      // Always redirect owners to dashboard regardless of listing status
+      // Use a more aggressive navigation approach to ensure redirect works from any screen
       
-      // Redirect immediately - approval checks happen in layout
-      console.log('🔄 Redirecting owner to dashboard...');
-      router.replace('/(owner)/dashboard');
+      // First, try to reset the navigation stack to root
+      if (router.canDismiss()) {
+        router.dismissAll();
+      }
+      
+      // Then navigate to owner dashboard
+      // Use setTimeout to ensure navigation happens after any modal closes
+      setTimeout(() => {
+        router.replace('/(owner)/dashboard');
+      }, 100);
     } catch (error) {
       console.error('❌ Error redirecting owner:', error);
-      // Default to dashboard if there's an error
-      router.replace('/(owner)/dashboard');
+      // Fallback: force redirect even from modal screens
+      try {
+        if (router.canDismiss()) {
+          router.dismissAll();
+        }
+        setTimeout(() => {
+          router.replace('/(owner)/dashboard');
+        }, 100);
+      } catch (fallbackError) {
+        console.error('❌ Fallback redirect also failed:', fallbackError);
+        // Last resort: direct replace
+        router.replace('/(owner)/dashboard');
+      }
     }
   };
 
   const redirectBrgyOfficial = async () => {
     try {
       console.log('🏛️ Redirecting barangay official to dashboard');
-      // Don't refresh user here - it's already refreshed in LoginModal
-      // Redirect immediately
       router.replace('/(brgy)/dashboard');
     } catch (error) {
       console.error('❌ Error redirecting barangay official:', error);
@@ -313,10 +324,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       console.log('✅ User state cleared - user is now logged out');
       
-      // 5. Set logout flag for notification
+      // 5. Set logout flag in cloud for notification
       try {
-        await AsyncStorage.setItem('user_logged_out', 'true');
-        console.log('✅ Logout flag set for notification');
+        // Store logout flag in Supabase user metadata
+        await supabase.auth.updateUser({
+          data: { user_logged_out: true, logged_out_at: new Date().toISOString() }
+        });
+        console.log('✅ Logout flag set in cloud for notification');
       } catch (flagError) {
         console.error('❌ Error setting logout flag:', flagError);
         // Continue with logout process even if flag setting fails
@@ -342,9 +356,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         setUser(null);
         
-        // Set logout flag for notification
+        // Set logout flag in cloud for notification
         try {
-          await AsyncStorage.setItem('user_logged_out', 'true');
+          await supabase.auth.updateUser({
+            data: { user_logged_out: true, logged_out_at: new Date().toISOString() }
+          });
         } catch (flagError) {
           console.error('❌ Error setting logout flag in emergency:', flagError);
         }
@@ -362,9 +378,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         setUser(null);
         
-        // Set logout flag for notification
+        // Set logout flag in cloud for notification
         try {
-          await AsyncStorage.setItem('user_logged_out', 'true');
+          await supabase.auth.updateUser({
+            data: { user_logged_out: true, logged_out_at: new Date().toISOString() }
+          });
         } catch (flagError) {
           console.error('❌ Error setting logout flag in force logout:', flagError);
         }
@@ -400,7 +418,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
           setUser(userWithFallbacks);
           setIsLoading(false);
-
         } else {
           console.log('ℹ️ No auth session found - user needs to login');
           setUser(null);

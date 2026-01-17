@@ -59,7 +59,10 @@ const Image = React.forwardRef<
     return (
       <LoadingImage
         source={props.source}
-        style={combinedStyle}
+        // Merge caller-provided style with our web compatibility style.
+        // Previously we replaced the caller style which could cause sizing/layout issues
+        // leading to the skeleton/background showing through.
+        style={Platform.OS === 'web' ? [props.style, combinedStyle] : props.style}
         resizeMode={props.resizeMode}
         showSkeleton={showSkeleton}
         fallbackIcon={fallbackIcon}

@@ -9,14 +9,20 @@ import {
     Image, 
     KeyboardAvoidingView,
     Platform,
-    ActivityIndicator
+    ActivityIndicator,
+    Modal,
+    Dimensions,
+    Alert
 } from 'react-native';
+import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/utils/db';
+import { supabase } from '@/utils/supabase-client';
 import { showAlert } from '@/utils/alert';
 import { ConversationRecord, MessageRecord } from '@/types';
 import { loadUserProfilePhoto } from '@/utils/user-profile-photos';
@@ -32,84 +38,64 @@ interface Message {
     imageUri?: string;
 }
 
-export default function OwnerChatRoom() {
+interface OwnerChatRoomProps {
+    conversationId?: string;
+    tenantName?: string;
+    tenantAvatar?: string;
+    propertyTitle?: string;
+    onBack?: () => void;
+}
+
+export default function OwnerChatRoom(props?: OwnerChatRoomProps) {
+    console.log('🚀🚀🚀 OWNER CHAT ROOM COMPONENT CALLED - START 🚀🚀🚀');
+    const componentStartTime = Date.now();
+    
     const router = useRouter();
+    console.log(`⏱️ OWNER: router hook took ${Date.now() - componentStartTime}ms`);
+    
     const { user } = useAuth();
-    const params = useLocalSearchParams();
+    console.log(`⏱️ OWNER: useAuth hook took ${Date.now() - componentStartTime}ms`);
     
-    // CRITICAL: Ensure we get the full conversationId, not truncated
-    // Extract conversationId from params - prefer conversationId query param over id route param
-    // The route param (id) might get truncated by Expo Router, so we prefer the query param
+    // Support both direct props (fast) and route params (slow)
+    let conversationId: string | undefined;
+    let tenantName: string | undefined;
+    let tenantAvatar: string | undefined;
+    let propertyTitle: string | undefined;
     
-    // Helper function to safely extract string from param
-    const extractParam = (param: any): string | undefined => {
-        if (!param) return undefined;
-        if (typeof param === 'string') return param.trim();
-        if (Array.isArray(param) && param.length > 0) {
-            const first = param[0];
-            return typeof first === 'string' ? first.trim() : String(first).trim();
-        }
-        // If it's an object, try to get a string representation
-        const str = String(param);
-        return str && str !== '[object Object]' ? str.trim() : undefined;
-    };
-    
-    // Try conversationId query param first (most reliable)
-    let conversationId = extractParam(params.conversationId);
-    
-    // If conversationId param is missing or truncated, try id route param
-    if (!conversationId || conversationId.length < 10) {
-        const routeId = extractParam(params.id);
-        if (routeId && routeId.length >= 10) {
-            console.log('✅ Using conversationId from route param (id):', routeId);
-            conversationId = routeId;
-        }
-    }
-    
-    // Final validation and recovery
-    if (conversationId && conversationId.length < 10) {
-        console.error('⚠️ WARNING: conversationId seems truncated:', conversationId);
-        console.error('⚠️ Raw params:', { 
-            conversationId: params.conversationId, 
-            id: params.id,
-            conversationIdType: typeof params.conversationId,
-            idType: typeof params.id
-        });
+    if (props?.conversationId) {
+        // Direct props mode (FAST - bypasses Expo Router)
+        console.log('⏱️ OWNER: Using direct props (bypassing router params)');
+        conversationId = props.conversationId;
+        tenantName = props.tenantName;
+        tenantAvatar = props.tenantAvatar;
+        propertyTitle = props.propertyTitle;
+        console.log(`⏱️ OWNER: Props extraction took ${Date.now() - componentStartTime}ms`);
+    } else {
+        // Route params mode (SLOW - uses Expo Router)
+        const paramsStartTime = Date.now();
+        console.log('⏱️ OWNER: About to call useLocalSearchParams...');
+        const params = useLocalSearchParams();
+        console.log(`⏱️ OWNER: useLocalSearchParams took ${Date.now() - paramsStartTime}ms`);
         
-        // Last resort: try to extract from raw params directly
-        const directConvId = params.conversationId || params.id;
-        if (directConvId) {
-            if (typeof directConvId === 'string' && directConvId.length >= 10) {
-                console.log('✅ Recovering conversationId from direct string param:', directConvId);
-                conversationId = directConvId.trim();
-            } else if (Array.isArray(directConvId) && directConvId.length > 0) {
-                const first = directConvId[0];
-                if (typeof first === 'string' && first.length >= 10) {
-                    console.log('✅ Recovering conversationId from direct array param:', first);
-                    conversationId = first.trim();
-                }
-            }
-        }
+        // Simple extraction (like tenant side)
+        const extractStartTime = Date.now();
+        const rawConvId = Array.isArray(params.conversationId) ? params.conversationId[0] : params.conversationId;
+        conversationId = rawConvId ? String(rawConvId).trim() : (Array.isArray(params.id) ? params.id[0] : params.id);
+        
+        tenantName = Array.isArray(params.tenantName) ? params.tenantName[0] : params.tenantName;
+        tenantAvatar = Array.isArray(params.tenantAvatar) ? params.tenantAvatar[0] : params.tenantAvatar;
+        propertyTitle = Array.isArray(params.propertyTitle) ? params.propertyTitle[0] : params.propertyTitle;
+        console.log(`⏱️ OWNER: Parameter extraction took ${Date.now() - extractStartTime}ms`);
     }
     
-    console.log('✅ Owner chat room initialized with conversationId:', {
-        conversationId,
-        length: conversationId?.length,
-        fromParams: { 
-            conversationId: params.conversationId, 
-            id: params.id,
-            conversationIdType: typeof params.conversationId,
-            idType: typeof params.id
-        }
-    });
-    const tenantName = Array.isArray(params.tenantName) ? params.tenantName[0] : params.tenantName;
-    const tenantAvatar = Array.isArray(params.tenantAvatar) ? params.tenantAvatar[0] : params.tenantAvatar;
-    const propertyTitle = Array.isArray(params.propertyTitle) ? params.propertyTitle[0] : params.propertyTitle;
+    console.log(`⏱️ OWNER: TOTAL COMPONENT INIT TIME = ${Date.now() - componentStartTime}ms`);
+    console.log('✅ OWNER: Initialized with conversationId:', conversationId, 'length:', conversationId?.length);
     
     const [messages, setMessages] = useState<Message[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const [loading, setLoading] = useState(true);
     const [sending, setSending] = useState(false);
+    const [viewingImage, setViewingImage] = useState<string | null>(null);
     const [tenantInfo, setTenantInfo] = useState<{
         name: string;
         avatar: string;
@@ -139,166 +125,54 @@ export default function OwnerChatRoom() {
         }
 
         try {
+            const startTime = Date.now();
+            console.log('⏱️ OWNER: Starting loadMessages...');
+            
             setLoading(true);
             const convIdForLookup = String(conversationId || '').trim();
-            console.log('🔄 Loading messages for conversation:', convIdForLookup);
 
-            // Load conversation
-            let conv: ConversationRecord | null = null;
-            try {
-                conv = await db.get<ConversationRecord>('conversations', convIdForLookup);
-            } catch (error) {
-                console.log('⚠️ Conversation not found, trying alternative ID formats');
-                // Try alternative ID formats
-                const allConversations = await db.list('conversations') || [];
-                conv = (allConversations as any[]).find((c: any) => {
-                    const cId = String(c.id || '').trim();
-                    return cId === convIdForLookup;
-                }) as ConversationRecord | null;
-            }
-            
-            if (conv) {
-                setConversation(conv);
-                console.log('✅ Conversation loaded:', {
-                    id: conv.id,
-                    ownerId: conv.ownerId || conv.owner_id,
-                    tenantId: conv.tenantId || conv.tenant_id,
-                    participantIds: conv.participantIds || conv.participant_ids
-                });
-                
-                // Get tenant info
-                const tenantId = conv.tenantId || conv.tenant_id;
-                if (tenantId) {
-                    try {
-                        const tenantRecord = await db.get('users', tenantId);
-                        if (tenantRecord) {
-                            const name = (tenantRecord as any).name || tenantName || 'Tenant';
-                            const email = (tenantRecord as any).email;
-                            const phone = (tenantRecord as any).phone;
-                            let avatar = tenantAvatar || '';
-                            try {
-                                const loadedAvatar = await loadUserProfilePhoto(tenantId);
-                                if (loadedAvatar) avatar = loadedAvatar;
-                            } catch (e) {
-                                console.log('Could not load tenant avatar');
-                            }
-                            setTenantInfo({ name, avatar });
-                            // Store tenant info for modal
-                            setTenantModalInfo({
-                                id: tenantId,
-                                name,
-                                email,
-                                phone,
-                                avatar
-                            });
-                        }
-                    } catch (error) {
-                        console.log('Error loading tenant info:', error);
-                        // Use fallback tenant info
-                        if (tenantName) {
-                            setTenantInfo({ name: tenantName, avatar: tenantAvatar || '' });
-                            setTenantModalInfo({
-                                id: tenantId || '',
-                                name: tenantName,
-                                avatar: tenantAvatar || ''
-                            });
-                        }
-                    }
-                } else if (tenantName) {
-                    // Use fallback tenant info if no tenantId in conversation
-                    setTenantInfo({ name: tenantName, avatar: tenantAvatar || '' });
-                    setTenantModalInfo({
-                        id: '',
-                        name: tenantName,
-                        avatar: tenantAvatar || ''
-                    });
-                }
-            } else {
-                console.log('⚠️ Conversation not found, using fallback tenant info');
-                if (tenantName) {
-                    setTenantInfo({ name: tenantName, avatar: tenantAvatar || '' });
-                }
-            }
-
-            // Get all messages for this conversation
-            const allMessages = await db.list('messages') || [];
+            // PRIORITY 1: Load messages FIRST (fastest, most important)
+            // OPTIMIZED: Query messages for this specific conversation only
             const normalizedConvId = String(conversationId || '').trim();
             
-            // Debug: Log all message conversationIds to see what we're working with
-            const allConvIds = (Array.isArray(allMessages) ? allMessages : []).slice(0, 10).map((m: any) => ({
-                id: m.id,
-                convId: String(m.conversationId || m.conversation_id || '').trim(),
-                text: m.text?.substring(0, 30)
-            }));
-            console.log(`📊 Owner: All message conversationIds (first 10):`, allConvIds);
+            const queryStart = Date.now();
+            console.log('⏱️ OWNER: Starting Supabase query...');
             
-            const conversationMessages = (Array.isArray(allMessages) ? allMessages : []).filter((msg: any) => {
-                if (!msg) return false;
-                const msgConversationId = String(msg.conversationId || msg.conversation_id || '').trim();
-                // Try multiple matching strategies
-                const exactMatch = msgConversationId === normalizedConvId;
-                const normalizedMatch = msgConversationId === String(conversationId).trim();
-                const matches = exactMatch || normalizedMatch;
-                
-                if (matches) {
-                    console.log('✅ Owner: Message matches:', { 
-                        msgId: msg.id, 
-                        msgConvId: msgConversationId, 
-                        expected: normalizedConvId,
-                        text: msg.text?.substring(0, 50),
-                        type: msg.type,
-                        senderId: msg.senderId || msg.sender_id
-                    });
-                } else if (msgConversationId && normalizedConvId) {
-                    // Log mismatches for debugging
-                    console.log('❌ Owner: Message mismatch:', {
-                        msgId: msg.id,
-                        msgConvId: msgConversationId,
-                        expected: normalizedConvId,
-                        match: false
-                    });
-                }
-                return matches;
-            });
-
-            console.log(`📨 Loading messages for conversation: "${normalizedConvId}"`);
-            console.log(`📨 Total messages in DB: ${allMessages.length}`);
-            console.log(`📨 Found ${conversationMessages.length} messages for conversation`);
-            if (conversationMessages.length > 0) {
-                console.log(`📨 Sample messages:`, conversationMessages.slice(0, 3).map((m: any) => ({
-                    id: m.id,
-                    conversationId: m.conversationId || m.conversation_id,
-                    text: m.text?.substring(0, 30),
-                    type: m.type,
-                    senderId: m.senderId || m.sender_id
-                })));
-            } else {
-                console.log('⚠️ NO MESSAGES FOUND - checking all messages for debugging:');
-                const sampleMessages = allMessages.slice(0, 5).map((m: any) => ({
-                    id: m.id,
-                    conversationId: m.conversationId || m.conversation_id,
-                    text: m.text?.substring(0, 30)
-                }));
-                console.log('📨 Sample of all messages:', sampleMessages);
+            // Use Supabase query to filter on the server side (much faster)
+            const { data: conversationMessages, error: messagesError } = await supabase
+                .from('messages')
+                .select('id, conversation_id, sender_id, text, type, image_uri, created_at, read_by')
+                .eq('conversation_id', normalizedConvId)
+                .order('created_at', { ascending: true });
+            
+            console.log(`⏱️ OWNER: Supabase query took ${Date.now() - queryStart}ms`);
+            
+            if (messagesError) {
+                console.error('❌ Error loading messages from Supabase:', messagesError);
+                throw messagesError; // Throw error to be caught by outer try-catch
             }
 
-            // Sort messages by creation time
-            conversationMessages.sort((a: any, b: any) => {
-                const timeA = new Date((a as any).createdAt || (a as any).created_at || 0).getTime();
-                const timeB = new Date((b as any).createdAt || (b as any).created_at || 0).getTime();
-                return timeA - timeB;
-            });
-
+            // Successfully loaded messages from Supabase
+            
+            // PRIORITY 2: Load conversation data in parallel (for owner ID)
+            const convStart = Date.now();
+            console.log('⏱️ OWNER: Loading conversation data...');
+            
+            let conv: ConversationRecord | null = null;
+            const convPromise = db.get<ConversationRecord>('conversations', convIdForLookup).catch(() => null);
+            
             // Get conversation owner ID to determine message sender role
+            conv = await convPromise;
+            console.log(`⏱️ OWNER: Conversation data took ${Date.now() - convStart}ms`);
+            
             const conversationOwnerId = conv ? (conv.ownerId || conv.owner_id) : null;
-            console.log('👤 Conversation owner ID:', conversationOwnerId, 'Current user ID:', user.id);
             
             // Convert to Message format
             const formattedMessages: Message[] = conversationMessages
                 .filter((msg: any) => {
                     // Filter out notifications
                     if (msg.type === 'notification') {
-                        console.log('🚫 Filtered out notification message:', msg.id);
+                        // console.log('🚫 Filtered out notification message:', msg.id);
                         return false;
                     }
                     // Ensure message has required fields
@@ -315,14 +189,8 @@ export default function OwnerChatRoom() {
                     const messageText = msg.text || '';
                     const isImage = msg.type === 'image';
                     
-                    console.log('📝 Processing message:', {
-                        id: msg.id,
-                        senderId,
-                        isOwner,
-                        hasText: messageText.length > 0,
-                        isImage,
-                        type: msg.type
-                    });
+                    // Reduced logging to avoid console spam during polling
+                    // console.log('📝 Processing message:', msg.id);
                     
                     return {
                         id: msg.id,
@@ -340,15 +208,17 @@ export default function OwnerChatRoom() {
                     const hasImage = msg.type === 'image' && msg.imageUri;
                     const shouldInclude = hasText || hasImage;
                     
-                    if (!shouldInclude) {
-                        console.log('🚫 Filtered out message without content:', msg.id, { hasText, hasImage, type: msg.type });
-                    }
+                    // Reduced logging - only log in development mode
+                    // if (!shouldInclude) {
+                    //     console.log('🚫 Filtered out message without content:', msg.id, { hasText, hasImage, type: msg.type });
+                    // }
                     
                     return shouldInclude;
                 });
 
-            console.log(`✅ Formatted ${formattedMessages.length} messages for display`);
             setMessages(formattedMessages);
+            console.log(`✅ OWNER: Loaded ${formattedMessages.length} messages successfully`);
+            console.log(`⏱️ OWNER: TOTAL TIME = ${Date.now() - startTime}ms`);
             
             // Only scroll to bottom on initial load or if user is already at bottom
             if (isInitialLoadRef.current || isUserAtBottomRef.current) {
@@ -358,9 +228,60 @@ export default function OwnerChatRoom() {
                 isInitialLoadRef.current = false;
             }
 
+            // PRIORITY 3: Load tenant info in background (non-blocking, after messages are displayed)
+            if (conv) {
+                setConversation(conv);
+                const tenantId = conv.tenantId || conv.tenant_id;
+                if (tenantId) {
+                    // Load tenant info without blocking
+                    db.get('users', tenantId).then(tenantRecord => {
+                        if (tenantRecord) {
+                            const name = (tenantRecord as any).name || tenantName || 'Tenant';
+                            const email = (tenantRecord as any).email;
+                            const phone = (tenantRecord as any).phone;
+                            setTenantInfo({ name, avatar: tenantAvatar || '' });
+                            setTenantModalInfo({
+                                id: tenantId,
+                                name,
+                                email,
+                                phone,
+                                avatar: tenantAvatar || ''
+                            });
+                            // Load avatar in background (slowest)
+                            loadUserProfilePhoto(tenantId).then(avatar => {
+                                if (avatar) {
+                                    setTenantInfo({ name, avatar });
+                                    setTenantModalInfo(prev => ({ ...prev!, avatar }));
+                                }
+                            }).catch(() => {});
+                        }
+                    }).catch(() => {
+                        // Fallback to params
+                        if (tenantName) {
+                            setTenantInfo({ name: tenantName, avatar: tenantAvatar || '' });
+                            setTenantModalInfo({
+                                id: tenantId,
+                                name: tenantName,
+                                avatar: tenantAvatar || ''
+                            });
+                        }
+                    });
+                } else if (tenantName) {
+                    setTenantInfo({ name: tenantName, avatar: tenantAvatar || '' });
+                    setTenantModalInfo({
+                        id: '',
+                        name: tenantName,
+                        avatar: tenantAvatar || ''
+                    });
+                }
+            } else if (tenantName) {
+                // No conversation found, use fallback
+                setTenantInfo({ name: tenantName, avatar: tenantAvatar || '' });
+            }
+
         } catch (error) {
-            console.error('❌ Error loading messages:', error);
-            showAlert('Error', 'Failed to load messages');
+            console.error('❌ Owner: Error loading messages:', error);
+            showAlert('Error', 'Failed to load messages. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -369,10 +290,13 @@ export default function OwnerChatRoom() {
     useFocusEffect(
         useCallback(() => {
             if (conversationId && user?.id) {
-                loadMessages();
+                // Load messages asynchronously (non-blocking)
+                setTimeout(() => {
+                    loadMessages();
+                }, 0);
                 
-                // Mark conversation as read when viewing
-                const markAsRead = async () => {
+                // Mark conversation as read in background (non-blocking)
+                setTimeout(async () => {
                     try {
                         const convIdForRead = String(conversationId).trim();
                         const conv = await db.get<ConversationRecord>('conversations', convIdForRead);
@@ -387,14 +311,12 @@ export default function OwnerChatRoom() {
                     } catch (error) {
                         console.error('Error marking conversation as read:', error);
                     }
-                };
+                }, 100);
                 
-                markAsRead();
-                
-                // Set up interval to check for new messages every 2 seconds
+                // Set up interval to check for new messages every 15 seconds (reduced frequency to minimize interruption)
                 const interval = setInterval(() => {
                     loadMessages();
-                }, 2000);
+                }, 15000);
                 
                 return () => clearInterval(interval);
             }
@@ -466,7 +388,6 @@ export default function OwnerChatRoom() {
                 senderId: user.id,
                 text: newMessage.trim(),
                 createdAt: now,
-                readBy: [user.id],
                 type: 'message'
             };
             
@@ -486,6 +407,28 @@ export default function OwnerChatRoom() {
 
             // Save message to database
             await db.upsert('messages', messageId, messageRecord);
+            
+            // Update conversation with last message
+            try {
+                const conv = await db.get<ConversationRecord>('conversations', normalizedConversationId);
+                if (conv) {
+                    await db.upsert('conversations', normalizedConversationId, {
+                        ...conv,
+                        lastMessageText: newMessage.trim(),
+                        last_message_text: newMessage.trim(),
+                        lastMessageAt: now,
+                        last_message_at: now,
+                        unreadByTenant: (conv.unreadByTenant || conv.unread_by_tenant || 0) + 1,
+                        unread_by_tenant: (conv.unreadByTenant || conv.unread_by_tenant || 0) + 1,
+                        updatedAt: now,
+                        updated_at: now
+                    });
+                    console.log('✅ Owner: Conversation updated with last message');
+                }
+            } catch (error) {
+                console.error('⚠️ Owner: Failed to update conversation:', error);
+                // Don't fail the send if conversation update fails
+            }
             
             // Verify the message was saved correctly
             try {
@@ -573,7 +516,15 @@ export default function OwnerChatRoom() {
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity
-                    onPress={() => router.back()}
+                    onPress={() => {
+                        if (props?.onBack) {
+                            // Direct props mode - use callback (INSTANT!)
+                            props.onBack();
+                        } else {
+                            // Route params mode - use router (slow)
+                            router.back();
+                        }
+                    }}
                     style={styles.backButton}
                 >
                     <Ionicons name="arrow-back" size={24} color="#111827" />
@@ -678,7 +629,12 @@ export default function OwnerChatRoom() {
                                         isCurrentUser ? styles.currentUserBubble : styles.otherUserBubble
                                     ]}>
                                         {message.type === 'image' && message.imageUri ? (
-                                            <Image source={{ uri: message.imageUri }} style={styles.messageImage} />
+                                            <TouchableOpacity
+                                                onPress={() => setViewingImage(message.imageUri || null)}
+                                                activeOpacity={0.8}
+                                            >
+                                                <Image source={{ uri: message.imageUri }} style={styles.messageImage} />
+                                            </TouchableOpacity>
                                         ) : (
                                             <Text style={[
                                                 styles.messageText,
@@ -724,6 +680,73 @@ export default function OwnerChatRoom() {
                     </TouchableOpacity>
                 </View>
             </KeyboardAvoidingView>
+
+            {/* Image Viewer Modal */}
+            <Modal
+                visible={viewingImage !== null}
+                transparent={true}
+                onRequestClose={() => setViewingImage(null)}
+                animationType="fade"
+            >
+                <View style={styles.imageViewerContainer}>
+                    <TouchableOpacity
+                        style={styles.imageViewerClose}
+                        onPress={() => setViewingImage(null)}
+                    >
+                        <Ionicons name="close" size={30} color="#FFFFFF" />
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                        style={styles.imageViewerDownload}
+                        onPress={async () => {
+                            if (!viewingImage) return;
+                            
+                            try {
+                                // Check if running in Expo Go on Android
+                                if (Platform.OS === 'android' && !__DEV__) {
+                                    Alert.alert(
+                                        'Note', 
+                                        'Saving images on Android requires a production build. Image viewing and zoom work fully!'
+                                    );
+                                    return;
+                                }
+                                
+                                // Request media library permissions
+                                const { status } = await MediaLibrary.requestPermissionsAsync();
+                                
+                                if (status !== 'granted') {
+                                    Alert.alert('Permission Denied', 'We need permission to save images to your gallery.');
+                                    return;
+                                }
+                                
+                                // Download image to cache
+                                const filename = viewingImage.split('/').pop() || 'image.jpg';
+                                const localUri = FileSystem.cacheDirectory + filename;
+                                
+                                await FileSystem.downloadAsync(viewingImage, localUri);
+                                
+                                // Save to media library
+                                await MediaLibrary.saveToLibraryAsync(localUri);
+                                
+                                Alert.alert('Success', 'Image saved to gallery!');
+                            } catch (error) {
+                                console.error('Error saving image:', error);
+                                Alert.alert('Error', 'Failed to save image. Please try again.');
+                            }
+                        }}
+                    >
+                        <Ionicons name="download-outline" size={28} color="#FFFFFF" />
+                    </TouchableOpacity>
+                    
+                    {viewingImage && (
+                        <Image
+                            source={{ uri: viewingImage }}
+                            style={styles.imageViewerImage}
+                            resizeMode="contain"
+                        />
+                    )}
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -933,6 +956,34 @@ const styles = StyleSheet.create({
     },
     sendButtonDisabled: {
         backgroundColor: '#D1D5DB',
+    },
+    imageViewerContainer: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    imageViewerClose: {
+        position: 'absolute',
+        top: 50,
+        right: 20,
+        zIndex: 10,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        borderRadius: 20,
+        padding: 8,
+    },
+    imageViewerDownload: {
+        position: 'absolute',
+        top: 50,
+        left: 20,
+        zIndex: 10,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        borderRadius: 20,
+        padding: 10,
+    },
+    imageViewerImage: {
+        width: Dimensions.get('window').width,
+        height: Dimensions.get('window').height,
     },
 });
 

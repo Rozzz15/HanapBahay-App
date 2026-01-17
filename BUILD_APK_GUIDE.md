@@ -1,123 +1,230 @@
-# 📱 Build APK with Cloud Backend - Complete Guide
+# 📱 Build APK for Your Phone - Guide
 
-## ✅ What's Already Done
+## 🎯 Current Status: Building...
 
-1. ✅ **Backend URL configured**: `https://web-production-e66fb.up.railway.app`
-2. ✅ **Backend tested**: All endpoints working
-3. ✅ **EAS configuration updated**: `eas.json` includes cloud backend URL for all profiles
-4. ✅ **Environment variables**: Configured in `eas.json` for development, preview, and production builds
+Your APK is currently being built by Expo Application Services (EAS)!
 
-## 🚀 Build Your APK Now
+---
 
-### Step 1: Make sure you're logged in to EAS
+## ⏳ What's Happening Now
 
-```bash
-eas login
+The build process typically takes **10-20 minutes** and includes:
+
+1. ✅ Compressing your project files
+2. ⏳ Uploading to EAS Build servers
+3. ⏳ Installing dependencies
+4. ⏳ Building native Android code
+5. ⏳ Creating APK file
+6. ⏳ Running final checks
+7. ⏳ Making APK available for download
+
+**Current Step:** Compressing project files
+
+---
+
+## 📊 Build Configuration
+
+**Profile:** Preview (APK build)  
+**Platform:** Android  
+**Build Type:** APK (installable directly)  
+**Environment Variables:**
+- ✅ EXPO_PUBLIC_API_URL: https://v-production-6704.up.railway.app
+- ✅ EXPO_PUBLIC_SUPABASE_URL: https://dkrctrkqhunttrnkqzsu.supabase.co
+- ✅ EXPO_PUBLIC_SUPABASE_ANON_KEY: Configured
+
+---
+
+## 🔍 Monitor Build Progress
+
+### Option 1: In Terminal
+The current terminal window will show live progress updates.
+
+### Option 2: Web Dashboard
+Visit: https://expo.dev/accounts/pogi123456/projects/hanapbahay/builds
+
+You can:
+- ✅ View build logs in real-time
+- ✅ See build progress
+- ✅ Download APK when complete
+
+---
+
+## 📥 After Build Completes
+
+### You'll Get:
+
+1. **Download Link** in the terminal
+2. **QR Code** to scan with your phone
+3. **Direct download URL**
+
+### To Install on Your Phone:
+
+**Method 1: QR Code (Easiest)**
+1. Open camera app on your Android phone
+2. Scan the QR code shown in terminal
+3. Tap the notification to download APK
+4. Allow installation from unknown sources (if prompted)
+5. Install the app
+
+**Method 2: Direct Download**
+1. Copy the download URL from terminal
+2. Open URL on your phone's browser
+3. Download the APK file
+4. Open Downloads and tap the APK
+5. Install
+
+**Method 3: Transfer via USB**
+1. Download APK to your computer
+2. Connect phone via USB
+3. Copy APK to phone's Download folder
+4. Use file manager on phone to find and install
+
+---
+
+## 🔐 Enable Unknown Sources
+
+If your phone blocks the installation:
+
+1. Go to **Settings** → **Security**
+2. Enable **"Install unknown apps"** or **"Unknown sources"**
+3. For your browser or file manager
+4. Try installing again
+
+---
+
+## ⚠️ Build Commands Reference
+
+**Preview Build (APK - for testing):**
+```powershell
+npx eas build --platform android --profile preview
 ```
 
-### Step 2: Set up Android credentials (one-time setup)
-
-The first time you build, EAS needs to set up Android signing credentials:
-
-```bash
-eas credentials
+**Production Build (AAB - for Play Store):**
+```powershell
+npx eas build --platform android --profile production
 ```
 
-Then:
-1. Select **Android**
-2. Choose **Set up new credentials** (or use existing if you have them)
-3. Follow the prompts
-
-**OR** let EAS manage it automatically by running the build interactively:
-
-```bash
-eas build --platform android --profile preview
+**iOS Build:**
+```powershell
+npx eas build --platform ios --profile production
 ```
 
-This will prompt you to set up credentials if needed.
+---
 
-### Step 3: Build the APK
+## 🛠️ If Build Fails
 
-Once credentials are set up, build your APK:
+**Common Issues:**
 
-```bash
-# Preview APK (for testing)
-eas build --platform android --profile preview
+1. **Network Error**
+   - Check internet connection
+   - Try again: Same command as above
 
-# Production AAB (for Play Store)
-eas build --platform android --profile production
+2. **Credentials Error**
+   - Run: `eas login`
+   - Re-run build command
+
+3. **Build Failed**
+   - Check build logs at expo.dev
+   - Look for error messages
+   - Fix errors in code
+   - Re-run build
+
+**Get Help:**
+- Build logs: https://expo.dev
+- Expo forums: https://forums.expo.dev
+- Expo Discord: https://discord.gg/expo
+
+---
+
+## 📊 Build Status Commands
+
+**Check build status:**
+```powershell
+eas build:list --platform android
 ```
 
-## 📋 Current Configuration
-
-### Backend URL
-- **Cloud Backend**: `https://web-production-e66fb.up.railway.app`
-- **Status**: ✅ Working and tested
-
-### EAS Build Profiles
-All profiles in `eas.json` are configured with:
-```json
-"env": {
-  "EXPO_PUBLIC_API_URL": "https://web-production-e66fb.up.railway.app"
-}
+**View specific build:**
+```powershell
+eas build:view [BUILD_ID]
 ```
 
-This means:
-- ✅ **Development builds** will use cloud backend
-- ✅ **Preview builds** will use cloud backend  
-- ✅ **Production builds** will use cloud backend
-
-## 🎯 Quick Build Command
-
-Run this to build your APK with cloud backend:
-
-```bash
-eas build --platform android --profile preview
+**Download APK manually:**
+```powershell
+eas build:download --output=hanapbahay.apk
 ```
 
-The build will:
-1. Use the cloud backend URL from `eas.json`
-2. Create an APK file
-3. Upload it to EAS servers
-4. Give you a download link
+---
 
-## ✅ Verification
+## ✅ After Installation
 
-After building, verify the APK uses cloud backend:
+Once installed on your phone:
 
-1. **Install APK** on Android device
-2. **Open app** and check console logs (if available)
-3. **Test features** that require backend (payments, etc.)
-4. **Verify** no "localhost" or "Network request failed" errors
+1. **Open the app**
+2. **Test login/signup**
+3. **Check all features:**
+   - Property listings
+   - Search functionality
+   - Booking system
+   - Payment (use test cards)
+   - Messaging
+   - Profile
 
-## 🔧 Troubleshooting
+4. **Test PayMongo payments:**
+   - Use test card: `4123450131001381`
+   - CVV: Any 3 digits
+   - Expiry: Any future date
 
-### Issue: "Generating a new Keystore is not supported in --non-interactive mode"
-**Solution**: Run build without `--non-interactive` flag:
-```bash
-eas build --platform android --profile preview
+---
+
+## 🎯 Expected APK Size
+
+**Approximate size:** 60-100 MB
+
+**Build time:** 10-20 minutes (depends on EAS server load)
+
+---
+
+## 📱 App Details
+
+**App Name:** HanapBahay  
+**Package:** com.hanapbahay.app  
+**Version:** 1.0.0  
+**Backend:** https://v-production-6704.up.railway.app  
+**Database:** Supabase (Singapore)  
+**Payments:** PayMongo (TEST mode)
+
+---
+
+## 🎉 Success Indicators
+
+When build completes, you'll see:
+
+```
+✔ Build finished
+  APK: https://expo.dev/artifacts/eas/[YOUR_APK_ID].apk
 ```
 
-### Issue: Credentials not set up
-**Solution**: Set up credentials first:
-```bash
-eas credentials
-# Select Android → Set up new credentials
-```
+Plus a QR code for easy download!
 
-### Issue: Build fails
-**Check**:
-- You're logged in: `eas whoami`
-- Project is linked: `eas project:info`
-- Backend is accessible: `node scripts/test-cloud-backend.js https://web-production-e66fb.up.railway.app`
+---
 
-## 📝 Summary
+## 📞 Quick Support
 
-**Everything is configured!** Your `eas.json` has the cloud backend URL for all build profiles. Just run:
+**Build taking too long?**
+- Normal: 10-20 minutes
+- Busy times: Up to 30 minutes
+- Check: https://status.expo.dev
 
-```bash
-eas build --platform android --profile preview
-```
+**Build failed?**
+- Check logs at expo.dev
+- Review error messages
+- Fix code issues
+- Rebuild
 
-And your APK will be built with the cloud backend automatically! 🚀
+---
 
+**Started:** 2026-01-13 00:14:17 +08:00  
+**Expected Completion:** ~00:30:00 +08:00  
+**Status:** In Progress...
+
+🚀 **Your APK will be ready soon!**

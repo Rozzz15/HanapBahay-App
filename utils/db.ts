@@ -1,4 +1,10 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+/**
+ * ⚠️ CLOUD-ONLY DATABASE ⚠️
+ * This file now redirects ALL operations to Supabase cloud storage.
+ * No local AsyncStorage is used - everything goes to the cloud.
+ */
+
+import { supabase } from './supabase-client';
 import {
   DbUserRecord,
   TenantProfileRecord,
@@ -14,13 +20,14 @@ import {
   MessageRecord,
   PropertyPhotoRecord,
   PropertyVideoRecord,
+  ListingInquiryRecord,
   BookingRecord,
   FavoriteRecord,
-  PropertyRatingRecord,
-  TenantPaymentMethod,
-  RentPaymentRecord,
-  TenantComplaintRecord
+  PropertyRatingRecord
 } from '../types';
+
+// Flag to completely disable local storage - ALL operations use cloud now
+const LOCAL_STORAGE_DISABLED = true;
 
 type CollectionName =
   | 'users'
@@ -37,24 +44,27 @@ type CollectionName =
   | 'user_profile_photos'
   | 'property_photos'
   | 'property_videos'
+  | 'listing_inquiries'
   | 'published_listings'
   | 'bookings'
   | 'favorites'
   | 'property_ratings'
   | 'personal_details'
-  | 'listing_inquiries'
-  | 'media_backups'
-  | 'user_favorites'
-  | 'listings'
-  | 'tenant_payment_methods'
+  | 'user_notification_states'
+  | 'listing_drafts'
   | 'rent_payments'
-  | 'tenant_complaints';
+  | 'tenant_complaints'
+  | 'maintenance_requests';
 
-type AnyRecord = DbUserRecord | TenantProfileRecord | OwnerProfileRecord | OwnerVerificationRecord | OwnerApplicationRecord | BrgyNotificationRecord | PaymentProfileRecord | PaymentAccount | UserProfilePhotoRecord | PublishedListingRecord | ConversationRecord | MessageRecord | PropertyPhotoRecord | PropertyVideoRecord | BookingRecord | FavoriteRecord | PropertyRatingRecord | TenantPaymentMethod | RentPaymentRecord | TenantComplaintRecord;
+type AnyRecord = DbUserRecord | TenantProfileRecord | OwnerProfileRecord | OwnerVerificationRecord | OwnerApplicationRecord | BrgyNotificationRecord | PaymentProfileRecord | PaymentAccount | UserProfilePhotoRecord | PublishedListingRecord | ListingInquiryRecord | ConversationRecord | MessageRecord | PropertyPhotoRecord | PropertyVideoRecord | BookingRecord | FavoriteRecord | PropertyRatingRecord;
 
 // Type guards for better type safety
 export function isPublishedListingRecord(record: AnyRecord): record is PublishedListingRecord {
-  return 'propertyType' in record && 'rentalType' in record && 'monthlyRent' in record;
+  // Check for both camelCase (from db.list) and snake_case (from direct Supabase queries)
+  const hasPropertyType = 'propertyType' in record || 'property_type' in record;
+  const hasRentalType = 'rentalType' in record || 'rental_type' in record;
+  const hasMonthlyRent = 'monthlyRent' in record || 'monthly_rent' in record;
+  return hasPropertyType && hasRentalType && hasMonthlyRent;
 }
 
 export function isConversationRecord(record: AnyRecord): record is ConversationRecord {
@@ -91,151 +101,207 @@ export function isPropertyRatingRecord(record: AnyRecord): record is PropertyRat
 
 export const KEY_PREFIX = 'hb_db_';
 
-// Cache for frequently accessed collections to reduce AsyncStorage calls
+// Cache for frequently accessed collections (cloud operations)
 const collectionCache = new Map<string, any>();
 
-async function readCollection<T extends AnyRecord>(name: CollectionName): Promise<Record<string, T>> {
-  const key = KEY_PREFIX + name;
-  
-  // Check cache first for better performance
-  if (collectionCache.has(key)) {
-    const cached = collectionCache.get(key);
-    // Ensure we always return an object, not undefined
-    return cached && typeof cached === 'object' ? cached : {};
+// Helper function to convert camelCase to snake_case for database
+function toSnakeCase(obj: any): any {
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    return obj;
   }
   
-  const raw = await AsyncStorage.getItem(key);
-  const result = raw ? JSON.parse(raw) as Record<string, T> : {};
+  if (Array.isArray(obj)) {
+    return obj.map(toSnakeCase);
+  }
   
-  // Ensure result is always an object
-  const safeResult = result && typeof result === 'object' ? result : {};
-  
-  // Cache the result for future calls
-  collectionCache.set(key, safeResult);
-  
-  return safeResult;
+  const snakeCaseObj: any = {};
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      snakeCaseObj[snakeKey] = toSnakeCase(obj[key]);
+    }
+  }
+  return snakeCaseObj;
 }
 
-// Helper function to retry AsyncStorage write
-async function retryAsyncStorageWrite(key: string, jsonData: string, retries: number = 1): Promise<void> {
-  for (let i = 0; i < retries; i++) {
-    await new Promise(resolve => setTimeout(resolve, 100 * (i + 1)));
-    await AsyncStorage.setItem(key, jsonData);
+// Helper function to convert snake_case to camelCase from database
+function toCamelCase(obj: any): any {
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    return obj;
   }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(toCamelCase);
+  }
+  
+  const camelCaseObj: any = {};
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+      camelCaseObj[camelKey] = toCamelCase(obj[key]);
+    }
+  }
+  return camelCaseObj;
 }
 
-async function writeCollection<T extends AnyRecord>(name: CollectionName, data: Record<string, T>): Promise<void> {
-  const key = KEY_PREFIX + name;
-  
-  // Write to AsyncStorage first
-  const jsonData = JSON.stringify(data);
-  // Calculate approximate size in bytes (UTF-8: most chars are 1 byte, some are 2-4 bytes)
-  // Use a conservative estimate of 1.5 bytes per character for JSON
-  const dataSize = jsonData.length * 1.5;
-  const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
-  
-  // Warn if data is getting large (AsyncStorage typically has 6-10MB limit)
-  if (dataSize > 5 * 1024 * 1024) { // 5MB
-    console.warn(`⚠️ Large data size for ${name}: ${dataSizeMB}MB. AsyncStorage may have issues.`);
-  }
-  
-  try {
-    // Write to AsyncStorage - this will throw if it fails
-    await AsyncStorage.setItem(key, jsonData);
-    
-    // For small data (< 100KB), skip verification to avoid false failures
-    // AsyncStorage.setItem will throw an error if the write actually fails
-    if (dataSize < 100 * 1024) {
-      // Just update cache and return - trust that setItem succeeded
-      collectionCache.delete(key);
-      collectionCache.set(key, { ...data });
-      return;
-    }
-    
-    // For larger data, do a simple verification
-    await new Promise(resolve => setTimeout(resolve, 150));
-    const verify = await AsyncStorage.getItem(key);
-    
-    if (!verify) {
-      // verify is null - try one more time
-      console.warn(`⚠️ AsyncStorage write verification returned null for ${name} (${dataSizeMB}MB), retrying...`);
-      await retryAsyncStorageWrite(key, jsonData, 1);
-      
-      await new Promise(resolve => setTimeout(resolve, 150));
-      const verify2 = await AsyncStorage.getItem(key);
-      
-      if (!verify2) {
-        const errorMsg = dataSize > 6 * 1024 * 1024 
-          ? `Failed to persist data to AsyncStorage for ${name}. Data size (${dataSizeMB}MB) may exceed AsyncStorage limits.`
-          : `Failed to persist data to AsyncStorage for ${name}`;
-        throw new Error(errorMsg);
-      }
-    } else {
-      // Verify that we got some data back - do a simple key count check
-      try {
-        const verifyParsed = JSON.parse(verify);
-        const dataParsed = JSON.parse(jsonData);
-        
-        // Just check if we have the same number of keys
-        if (Object.keys(verifyParsed).length !== Object.keys(dataParsed).length) {
-          console.warn(`⚠️ AsyncStorage key count mismatch for ${name}, but proceeding...`);
-        }
-      } catch (parseError) {
-        // If we can't parse, but verify is not null, assume it's okay
-        console.warn(`⚠️ Could not parse verification data for ${name}, but data was written`);
-      }
-    }
-    
-    // Clear and update cache with a fresh copy to ensure consistency
-    collectionCache.delete(key);
-    collectionCache.set(key, { ...data });
-  } catch (error) {
-    // If it's a known AsyncStorage error, provide more context
-    if (error instanceof Error) {
-      console.error(`❌ AsyncStorage error for ${name} (${dataSizeMB}MB):`, error.message);
-    }
-    throw error;
-  }
+// Some legacy tables were created with camelCase column names (not recommended in Postgres)
+// and therefore should NOT be converted to snake_case on write.
+const NO_SNAKE_CASE_TABLES = new Set<CollectionName>([
+  'listing_inquiries',
+]);
+
+// Map of tables to their primary key column names
+const PRIMARY_KEY_MAP: Record<string, string> = {
+  'owner_profiles': 'user_id',
+  // Add other tables with non-standard primary keys here if needed
+};
+
+// Get the primary key column name for a table
+function getPrimaryKey(tableName: CollectionName): string {
+  return PRIMARY_KEY_MAP[tableName] || 'id';
 }
 
+// Cloud-only implementation - all operations use Supabase
 export const db = {
   async upsert<T extends AnyRecord>(name: CollectionName, id: string, record: T): Promise<void> {
-    const col = await readCollection<T>(name);
-    // Create a new object to ensure proper cache invalidation
-    const updatedCol = { ...col, [id]: record };
-    await writeCollection<T>(name, updatedCol);
+    try {
+      console.log(`☁️ Upserting to cloud: ${name}/${id}`);
+      
+      const primaryKey = getPrimaryKey(name);
+      
+      // Use the correct primary key column name
+      const recordWithPrimaryKey: any = { ...record, [primaryKey]: id };
+
+      // SAFETY: Some deployments may not have the optional `read_by` column on `messages`.
+      // If we send it, Supabase will throw PGRST204 (column not found in schema cache).
+      // To keep messaging functional across older schemas, strip it on write.
+      if (name === 'messages') {
+        delete recordWithPrimaryKey.readBy;
+        delete recordWithPrimaryKey.read_by;
+      }
+
+      // Convert camelCase to snake_case for most tables.
+      // For legacy camelCase tables, write as-is.
+      const payload = NO_SNAKE_CASE_TABLES.has(name)
+        ? recordWithPrimaryKey
+        : toSnakeCase(recordWithPrimaryKey);
+      
+      const { error } = await supabase
+        .from(name)
+        .upsert(payload, { onConflict: primaryKey });
+      
+      if (error) {
+        console.error(`❌ Error upserting to ${name}:`, error);
+        throw error;
+      }
+      console.log(`✅ Successfully upserted to ${name}/${id}`);
+    } catch (error) {
+      console.error(`❌ Failed to upsert to ${name}:`, error);
+      throw error;
+    }
   },
+  
   async get<T extends AnyRecord>(name: CollectionName, id: string): Promise<T | null> {
-    const col = await readCollection<T>(name);
-    return col[id] ?? null;
+    try {
+      console.log(`☁️ Fetching from cloud: ${name}/${id}`);
+      
+      const primaryKey = getPrimaryKey(name);
+      
+      const { data, error } = await supabase
+        .from(name)
+        .select('*')
+        .eq(primaryKey, id)
+        .single();
+      
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // Not found - return null instead of throwing
+          console.log(`ℹ️ No record found: ${name}/${id}`);
+          return null;
+        }
+        console.error(`❌ Error fetching from ${name}:`, error);
+        throw error;
+      }
+      console.log(`✅ Successfully fetched from ${name}/${id}`);
+      // Convert snake_case from database to camelCase for app
+      return toCamelCase(data) as T;
+    } catch (error) {
+      console.error(`❌ Failed to fetch from ${name}:`, error);
+      return null;
+    }
   },
+  
   async list<T extends AnyRecord>(name: CollectionName): Promise<T[]> {
-    const col = await readCollection<T>(name);
-    // Ensure col is an object before calling Object.values
-    if (!col || typeof col !== 'object') {
+    try {
+      console.log(`☁️ Listing from cloud: ${name}`);
+      const { data, error } = await supabase
+        .from(name)
+        .select('*');
+      
+      if (error) {
+        // Check if it's a network error
+        const errorMessage = error.message || '';
+        if (errorMessage.includes('Network') || errorMessage.includes('gateway') || errorMessage.includes('connection')) {
+          console.warn(`⚠️ Network error listing from ${name}:`, errorMessage);
+          console.log('💡 Tip: Check your internet connection or try again later');
+        } else {
+          console.error(`❌ Error listing from ${name}:`, error);
+        }
+        // Don't throw - just return empty array to prevent app crashes
+        return [];
+      }
+      
+      // Handle null data gracefully
+      if (!data) {
+        console.log(`ℹ️ No data returned from ${name}`);
+        return [];
+      }
+      
+      console.log(`✅ Successfully listed ${data.length} records from ${name}`);
+      // Convert snake_case from database to camelCase for app
+      return data.map(item => toCamelCase(item)) as T[];
+    } catch (error) {
+      // Check if it's a network error in the catch block too
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('Network') || errorMessage.includes('gateway') || errorMessage.includes('connection')) {
+        console.warn(`⚠️ Network error listing from ${name}:`, errorMessage);
+        console.log('💡 Tip: Check your internet connection and try refreshing');
+      } else {
+        console.error(`❌ Failed to list from ${name}:`, error);
+      }
+      // Always return empty array instead of throwing to prevent app crashes
       return [];
     }
-    return Object.values(col);
   },
+  
   async getAll<T extends AnyRecord>(name: CollectionName): Promise<T[]> {
-    const col = await readCollection<T>(name);
-    // Ensure col is an object before calling Object.values
-    if (!col || typeof col !== 'object') {
-      return [];
-    }
-    return Object.values(col);
+    return this.list<T>(name);
   },
+  
   async remove(name: CollectionName, id: string): Promise<void> {
-    // Safety guard: never allow deleting users in non-dev environments
-    const isDev = process.env.NODE_ENV !== 'production' && process.env.EXPO_PUBLIC_ALLOW_DATA_CLEAR === 'true';
-    if (name === 'users' && !isDev) {
-      console.warn('[db.remove] Blocked attempt to delete from users collection');
-      return;
+    try {
+      // Safety guard: never allow deleting users in non-dev environments
+      const isDev = process.env.NODE_ENV !== 'production' && process.env.EXPO_PUBLIC_ALLOW_DATA_CLEAR === 'true';
+      if (name === 'users' && !isDev) {
+        console.warn('[db.remove] Blocked attempt to delete from users collection');
+        return;
+      }
+      
+      console.log(`☁️ Removing from cloud: ${name}/${id}`);
+      const { error } = await supabase
+        .from(name)
+        .delete()
+        .eq('id', id);
+      
+      if (error) {
+        console.error(`❌ Error removing from ${name}:`, error);
+        throw error;
+      }
+      console.log(`✅ Successfully removed from ${name}/${id}`);
+    } catch (error) {
+      console.error(`❌ Failed to remove from ${name}:`, error);
+      throw error;
     }
-    const col = await readCollection<any>(name);
-    // Create a new object without the deleted record
-    const { [id]: removed, ...updatedCol } = col;
-    await writeCollection<any>(name, updatedCol);
   }
 };
 
@@ -243,18 +309,11 @@ export function generateId(prefix: string = 'rec'): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// Danger: Clears all collections stored with KEY_PREFIX.
+// Danger: Clears all collections - CLOUD VERSION
 export async function clearAllCollections(): Promise<void> {
-  const isDev = process.env.NODE_ENV !== 'production' && process.env.EXPO_PUBLIC_ALLOW_DATA_CLEAR === 'true';
-  if (!isDev) {
-    console.warn('[clearAllCollections] Blocked in this environment');
-    return;
-  }
-  const keys = await AsyncStorage.getAllKeys();
-  const targets = keys.filter(k => k.startsWith(KEY_PREFIX));
-  if (targets.length > 0) {
-    await AsyncStorage.multiRemove(targets);
-  }
+  console.warn('⚠️ clearAllCollections: Cloud storage clearing is disabled for safety.');
+  console.warn('⚠️ To clear data, use Supabase dashboard or SQL commands.');
+  // Do nothing - cloud data should be managed through Supabase dashboard
 }
 
 // Check if an owner has any existing published listings
@@ -279,50 +338,31 @@ export async function hasOwnerListings(ownerId: string): Promise<boolean> {
   }
 }
 
-// Remove duplicate published listings based on unique properties
-// IMPORTANT: Only removes listings with EXACT same ID (true duplicates)
+// Remove duplicate published listings - CLOUD VERSION
 export async function removeDuplicateListings(): Promise<void> {
   try {
-    const publishedListings = await readCollection<PublishedListingRecord>('published_listings');
-    const uniqueListings = new Map<string, PublishedListingRecord>();
+    console.log('☁️ Checking for duplicate listings in cloud...');
+    const listings = await db.list<PublishedListingRecord>('published_listings');
+    const seen = new Set<string>();
+    const duplicates: string[] = [];
     
-    // Group by listing ID only (not by address/propertyType) 
-    // This prevents removing valid different listings at the same address
-    Object.values(publishedListings).forEach(listing => {
-      const key = listing.id; // Only use ID as unique key
-      if (!uniqueListings.has(key)) {
-        uniqueListings.set(key, listing);
+    listings.forEach(listing => {
+      if (seen.has(listing.id)) {
+        duplicates.push(listing.id);
       } else {
-        // Keep the most recent one if there are true duplicates (same ID)
-        const existing = uniqueListings.get(key)!;
-        if (listing.publishedAt && existing.publishedAt) {
-          if (new Date(listing.publishedAt) > new Date(existing.publishedAt)) {
-            uniqueListings.set(key, listing);
-          }
-        }
+        seen.add(listing.id);
       }
     });
     
-    // Convert back to object format
-    const cleanedListings: Record<string, PublishedListingRecord> = {};
-    Array.from(uniqueListings.values()).forEach(listing => {
-      cleanedListings[listing.id] = listing;
-    });
-    
-    // Write back the cleaned data
-    await writeCollection('published_listings', cleanedListings);
-    
-    const originalCount = Object.keys(publishedListings).length;
-    const cleanedCount = Object.keys(cleanedListings).length;
-    const removedCount = originalCount - cleanedCount;
-    
-    if (removedCount > 0) {
-      console.log(`🧹 Cleaned published listings: ${originalCount} → ${cleanedCount} (removed ${removedCount} true duplicates with same ID)`);
+    if (duplicates.length > 0) {
+      console.log(`⚠️ Found ${duplicates.length} duplicate listings`);
+      console.log('Duplicate IDs:', duplicates);
+      console.log('⚠️ Manual cleanup recommended via Supabase dashboard');
     } else {
-      console.log(`✅ No duplicate listings found - all ${originalCount} listings are unique`);
+      console.log(`✅ No duplicate listings found - all ${listings.length} listings are unique`);
     }
   } catch (error) {
-    console.error('❌ Error removing duplicate listings:', error);
+    console.error('❌ Error checking duplicate listings:', error);
   }
 }
 
@@ -371,10 +411,9 @@ export async function verifyUserListingsPersistence(userId: string): Promise<{
   }
 }
 
-// Get all records from a collection
+// Get all records from a collection - CLOUD VERSION
 export async function getAll<T extends AnyRecord>(name: CollectionName): Promise<T[]> {
-  const collection = await readCollection<T>(name);
-  return Object.values(collection);
+  return db.list<T>(name);
 }
 
 // Clear cache function
@@ -383,15 +422,17 @@ export async function clearCache(): Promise<void> {
   console.log('🗑️ Database cache cleared');
 }
 
-// Clear cache for a specific collection
-export function clearCollectionCache(name: CollectionName): void {
-  const key = KEY_PREFIX + name;
-  collectionCache.delete(key);
-  console.log(`🗑️ Cache cleared for collection: ${name}`);
+// Get all published listings with proper typing - CLOUD VERSION
+export async function getAllPublishedListings(): Promise<PublishedListingRecord[]> {
+  try {
+    console.log('☁️ Fetching all published listings from cloud...');
+    const rawListings = await db.list<PublishedListingRecord>('published_listings');
+    const validListings = rawListings.filter(isPublishedListingRecord);
+    console.log(`✅ Fetched ${validListings.length} published listings from cloud`);
+    return validListings;
+  } catch (error) {
+    console.error('❌ Error fetching published listings:', error);
+    return [];
+  }
 }
 
-// Get all published listings with proper typing
-export async function getAllPublishedListings(): Promise<PublishedListingRecord[]> {
-  const rawListings = await db.list('published_listings');
-  return rawListings.filter(isPublishedListingRecord);
-}

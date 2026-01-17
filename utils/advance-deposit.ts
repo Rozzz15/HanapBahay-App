@@ -1,6 +1,5 @@
 import { db } from './db';
 import { BookingRecord, RentPaymentRecord } from '@/types';
-
 /**
  * Use advance deposit months when tenant wants to leave early
  * This allows tenant to use their pre-paid advance months instead of paying monthly
@@ -25,7 +24,6 @@ export async function useAdvanceDepositMonths(
         error: 'Booking not found'
       };
     }
-
     // Check if booking has advance deposit months
     if (!booking.advanceDepositMonths || booking.advanceDepositMonths === 0) {
       return {
@@ -33,35 +31,27 @@ export async function useAdvanceDepositMonths(
         error: 'No advance deposit months available for this booking'
       };
     }
-
     const currentRemaining = booking.remainingAdvanceMonths || booking.advanceDepositMonths;
-    
     if (currentRemaining < monthsToUse) {
       return {
         success: false,
         error: `Insufficient advance months. Available: ${currentRemaining}, Requested: ${monthsToUse}`
       };
     }
-
     // Deduct the advance months
     const newRemaining = currentRemaining - monthsToUse;
-
     // Update booking
     const updatedBooking: BookingRecord = {
       ...booking,
       remainingAdvanceMonths: newRemaining,
       updatedAt: new Date().toISOString()
     };
-
     await db.upsert('bookings', bookingId, updatedBooking);
-
     console.log(`✅ Used ${monthsToUse} advance month(s). Remaining: ${newRemaining}`);
-
     // Check if advance months are exhausted and auto-remove tenant
     if (newRemaining === 0) {
       await autoRemoveTenantWhenAdvanceExhausted(bookingId);
     }
-
     return {
       success: true,
       remainingAdvanceMonths: newRemaining,
@@ -75,7 +65,6 @@ export async function useAdvanceDepositMonths(
     };
   }
 }
-
 /**
  * Automatically remove tenant from property when advance deposit months are exhausted
  * This marks the booking as completed and updates property availability
@@ -86,16 +75,13 @@ export async function autoRemoveTenantWhenAdvanceExhausted(bookingId: string): P
     if (!booking) {
       throw new Error('Booking not found');
     }
-
     // Only auto-remove if booking is active and advance months are exhausted
     if (booking.status !== 'approved' || booking.paymentStatus !== 'paid') {
       return; // Don't remove if booking is not active
     }
-
     if (booking.remainingAdvanceMonths !== undefined && booking.remainingAdvanceMonths > 0) {
       return; // Don't remove if there are still advance months remaining
     }
-
     // Mark booking as completed
     const now = new Date().toISOString();
     const updatedBooking: BookingRecord = {
@@ -104,10 +90,8 @@ export async function autoRemoveTenantWhenAdvanceExhausted(bookingId: string): P
       completedAt: now,
       updatedAt: now
     };
-
     await db.upsert('bookings', bookingId, updatedBooking);
     console.log(`✅ Auto-removed tenant from property. Booking ${bookingId} marked as completed.`);
-
     // Update property availability status
     try {
       const { checkAndRejectPendingBookings } = await import('./listing-capacity');
@@ -115,7 +99,6 @@ export async function autoRemoveTenantWhenAdvanceExhausted(bookingId: string): P
     } catch (statusError) {
       console.warn('⚠️ Could not update listing availability status:', statusError);
     }
-
     // Dispatch event to notify owner and tenant
     try {
       const { dispatchCustomEvent } = await import('./custom-events');
@@ -135,7 +118,6 @@ export async function autoRemoveTenantWhenAdvanceExhausted(bookingId: string): P
     throw error;
   }
 }
-
 /**
  * Check and update advance months when a monthly payment is made
  * If tenant has advance months, use them instead of creating a new payment record
@@ -155,27 +137,22 @@ export async function checkAndUseAdvanceMonthForPayment(
     if (!booking) {
       return { usedAdvanceMonth: false };
     }
-
     // Check if booking has remaining advance months
     if (!booking.remainingAdvanceMonths || booking.remainingAdvanceMonths === 0) {
       return { usedAdvanceMonth: false };
     }
-
     // Check if payment for this month already exists and is paid
     const { getRentPaymentsByBooking } = await import('./tenant-payments');
     const existingPayments = await getRentPaymentsByBooking(bookingId);
     const existingPayment = existingPayments.find(
       p => p.paymentMonth === paymentMonth && p.status === 'paid'
     );
-
     // If payment already exists and is paid, don't use advance month
     if (existingPayment) {
       return { usedAdvanceMonth: false };
     }
-
     // Use one advance month for this payment
     const result = await useAdvanceDepositMonths(bookingId, 1);
-    
     if (result.success) {
       // Mark the payment month as covered by advance deposit
       // Create a payment record with status 'paid' to track that this month is covered
@@ -198,23 +175,19 @@ export async function checkAndUseAdvanceMonthForPayment(
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-
       await db.upsert('rent_payments', advancePayment.id, advancePayment);
       console.log(`✅ Created payment record for ${paymentMonth} using advance deposit`);
-
       return {
         usedAdvanceMonth: true,
         remainingAdvanceMonths: result.remainingAdvanceMonths
       };
     }
-
     return { usedAdvanceMonth: false };
   } catch (error) {
     console.error('❌ Error checking advance month for payment:', error);
     return { usedAdvanceMonth: false };
   }
 }
-
 /**
  * Get advance deposit information for a booking
  */
@@ -228,10 +201,8 @@ export async function getAdvanceDepositInfo(bookingId: string): Promise<{
     if (!booking) {
       return { hasAdvanceDeposit: false };
     }
-
     const advanceMonths = booking.advanceDepositMonths || 0;
     const remaining = booking.remainingAdvanceMonths ?? advanceMonths;
-
     return {
       advanceDepositMonths: advanceMonths > 0 ? advanceMonths : undefined,
       remainingAdvanceMonths: remaining > 0 ? remaining : undefined,
@@ -242,7 +213,6 @@ export async function getAdvanceDepositInfo(bookingId: string): Promise<{
     return { hasAdvanceDeposit: false };
   }
 }
-
 /**
  * End rental stay and use all remaining advance deposit months
  * This allows tenants to end their rental stay early by using their pre-paid advance months
@@ -267,7 +237,6 @@ export async function endRentalStayWithAdvanceDeposit(
 }> {
   try {
     console.log('🔄 Ending rental stay with advance deposit:', { bookingId, tenantId });
-    
     const booking = await db.get<BookingRecord>('bookings', bookingId);
     if (!booking) {
       return {
@@ -275,7 +244,6 @@ export async function endRentalStayWithAdvanceDeposit(
         error: 'Booking not found'
       };
     }
-
     // Verify tenant authorization
     if (booking.tenantId !== tenantId) {
       return {
@@ -283,19 +251,20 @@ export async function endRentalStayWithAdvanceDeposit(
         error: 'Unauthorized: You can only end your own rental stay'
       };
     }
-
     // Check if booking is active
-    if (booking.status !== 'approved' || booking.paymentStatus !== 'paid') {
+    // Allow bookings that are approved+paid OR in termination countdown mode
+    const isActiveBooking = (booking.status === 'approved' && booking.paymentStatus === 'paid') ||
+                           (booking.terminationInitiatedAt && booking.terminationMode === 'countdown');
+    
+    if (!isActiveBooking) {
       return {
         success: false,
         error: 'Can only end rental stay for active approved bookings'
       };
     }
-
     // Check if listing has advance deposit
     const hasAdvanceDeposit = booking.advanceDepositMonths && booking.advanceDepositMonths > 0;
     const currentRemaining = hasAdvanceDeposit ? (booking.remainingAdvanceMonths ?? booking.advanceDepositMonths) : 0;
-    
     // If no advance deposit, only allow immediate leave
     if (!hasAdvanceDeposit) {
       if (!immediateLeave) {
@@ -307,14 +276,12 @@ export async function endRentalStayWithAdvanceDeposit(
       // Process immediate leave without advance deposit
       return await processImmediateLeaveWithoutAdvanceDeposit(bookingId, booking);
     }
-    
     if (currentRemaining === 0) {
       return {
         success: false,
         error: 'No remaining advance deposit months available'
       };
     }
-
     // Check if termination is already initiated
     if (booking.terminationInitiatedAt && !immediateLeave) {
       return {
@@ -322,31 +289,24 @@ export async function endRentalStayWithAdvanceDeposit(
         error: 'Termination already initiated. Use "Leave Immediately" to end your stay now.'
       };
     }
-
     const monthsToUse = currentRemaining;
-    
     if (monthsToUse === 0 || !monthsToUse) {
       return {
         success: false,
         error: 'No remaining advance deposit months available'
       };
     }
-
     // If immediate leave, process immediately
     if (immediateLeave) {
       return await processImmediateLeave(bookingId, booking, monthsToUse);
     }
-
     // Otherwise, start countdown mode
     console.log(`⏳ Starting countdown mode with ${monthsToUse} advance month(s)`);
-    
     const now = new Date();
     const terminationEndDate = new Date(now);
     terminationEndDate.setMonth(terminationEndDate.getMonth() + monthsToUse);
-    
     // Calculate days remaining
     const daysRemaining = Math.ceil((terminationEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    
     // Update booking with termination info but keep it as approved/paid
     // Don't deduct remainingAdvanceMonths yet - it will be deducted when countdown reaches 0 or immediate leave
     const updatedBooking: BookingRecord = {
@@ -357,10 +317,8 @@ export async function endRentalStayWithAdvanceDeposit(
       // Keep remainingAdvanceMonths as is - don't deduct until countdown ends or immediate leave
       updatedAt: now.toISOString()
     };
-    
     await db.upsert('bookings', bookingId, updatedBooking);
     console.log(`✅ Started termination countdown. End date: ${terminationEndDate.toISOString()}, Days remaining: ${daysRemaining}`);
-    
     // Send notification to owner
     try {
       const { createOrFindConversation } = await import('./conversation-utils');
@@ -373,26 +331,21 @@ export async function endRentalStayWithAdvanceDeposit(
         propertyId: booking.propertyId,
         propertyTitle: booking.propertyTitle,
       });
-
       const messageId = generateId('msg');
       const messageText = `🏠 Rental Stay Termination Initiated\n\n${booking.tenantName} has initiated ending their rental stay at ${booking.propertyTitle}.\n\n${monthsToUse} advance deposit month(s) will be used over the next ${daysRemaining} days.\n\nThe tenant will be automatically removed on ${terminationEndDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.`;
-
       const messageRecord: any = {
         id: messageId,
         conversationId,
         senderId: booking.tenantId,
-        senderName: booking.tenantName,
         text: messageText,
+        type: 'notification' as const,
         createdAt: now.toISOString(),
-        updatedAt: now.toISOString(),
       };
-
       await db.upsert('messages', messageId, messageRecord);
       console.log('✅ Sent notification to owner about termination initiation');
     } catch (messageError) {
       console.warn('⚠️ Could not send notification to owner:', messageError);
     }
-    
     return {
       success: true,
       monthsUsed: 0, // No months used yet in countdown mode
@@ -409,7 +362,6 @@ export async function endRentalStayWithAdvanceDeposit(
     };
   }
 }
-
 /**
  * Process immediate leave - immediately remove tenant and use all advance months
  */
@@ -426,29 +378,24 @@ async function processImmediateLeave(
 }> {
   try {
     console.log(`💰 Processing immediate leave with ${monthsToUse} advance month(s)`);
-
     // Get all upcoming unpaid payments
     const { getRentPaymentsByBooking, getNextDueDate } = await import('./tenant-payments');
     const existingPayments = await getRentPaymentsByBooking(bookingId);
     const unpaidPayments = existingPayments.filter(
       p => p.status === 'pending' || p.status === 'overdue' || p.status === 'rejected'
     );
-
     const { generateId } = await import('./db');
     const now = new Date().toISOString();
     let paymentsCovered = 0;
-
     // Step 1: Cover existing unpaid payments first
     // Sort unpaid payments by due date to cover them in order
     const sortedUnpaidPayments = unpaidPayments.sort((a, b) => 
       new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
     );
-
     // Cover up to monthsToUse existing unpaid payments
     const paymentsToCover = Math.min(monthsToUse, sortedUnpaidPayments.length);
     for (let i = 0; i < paymentsToCover; i++) {
       const payment = sortedUnpaidPayments[i];
-      
       // Mark payment as paid using advance deposit
       const updatedPayment: RentPaymentRecord = {
         ...payment,
@@ -461,12 +408,10 @@ async function processImmediateLeave(
         notes: `Paid using advance deposit month (rental stay ended)`,
         updatedAt: now
       };
-
       await db.upsert('rent_payments', payment.id, updatedPayment);
       paymentsCovered++;
       console.log(`✅ Covered existing payment ${payment.paymentMonth} with advance deposit`);
     }
-
     // Step 2: Create payment records for future months if there are remaining advance months
     const remainingMonths = monthsToUse - paymentsCovered;
     if (remainingMonths > 0) {
@@ -475,30 +420,23 @@ async function processImmediateLeave(
       const lastPaidPayment = allPaymentsAfterCovering
         .filter(p => p.status === 'paid')
         .sort((a, b) => new Date(b.paidDate || '').getTime() - new Date(a.paidDate || '').getTime())[0];
-      
       const nextDueDate = getNextDueDate(booking.startDate, lastPaidPayment?.paidDate);
       let currentDate = new Date(nextDueDate);
       const startDate = new Date(booking.startDate);
       const moveInDay = startDate.getDate();
-
       console.log(`📅 Creating ${remainingMonths} future payment record(s) starting from ${nextDueDate}`);
-
       let futurePaymentsCreated = 0;
       let attempts = 0;
       const maxAttempts = remainingMonths * 2; // Safety limit to prevent infinite loop
-
       // Create exactly remainingMonths payment records, skipping months that are already paid
       while (futurePaymentsCreated < remainingMonths && attempts < maxAttempts) {
         attempts++;
-        
         // Move to next month
         currentDate.setMonth(currentDate.getMonth() + 1);
         const paymentMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
-        
         // Check if payment already exists
         const existingPaymentIndex = allPaymentsAfterCovering.findIndex(p => p.paymentMonth === paymentMonth);
         const existingPayment = existingPaymentIndex >= 0 ? allPaymentsAfterCovering[existingPaymentIndex] : null;
-        
         if (existingPayment) {
           // If payment exists and is already paid, skip it
           if (existingPayment.status === 'paid') {
@@ -527,13 +465,11 @@ async function processImmediateLeave(
           }
           continue;
         }
-
         // Calculate due date for this month
         const lastDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
         const targetDay = Math.min(moveInDay, lastDayOfMonth);
         const dueDate = new Date(currentDate);
         dueDate.setDate(targetDay);
-
         const advancePayment: RentPaymentRecord = {
           id: generateId('rent_payment'),
           bookingId,
@@ -553,23 +489,18 @@ async function processImmediateLeave(
           createdAt: now,
           updatedAt: now
         };
-
         await db.upsert('rent_payments', advancePayment.id, advancePayment);
         paymentsCovered++;
         futurePaymentsCreated++;
         console.log(`✅ Created future payment record for ${paymentMonth} using advance deposit`);
-        
         // Update the payments list to include the newly created payment
         allPaymentsAfterCovering.push(advancePayment);
       }
-
       if (futurePaymentsCreated < remainingMonths) {
         console.warn(`⚠️ Only created ${futurePaymentsCreated} of ${remainingMonths} future payment records`);
       }
     }
-
     console.log(`✅ Covered ${paymentsCovered} payment(s) with ${monthsToUse} advance month(s)`);
-
     // Step 3: Mark booking as completed and clear termination fields
     const finalBooking: BookingRecord = {
       ...booking,
@@ -581,10 +512,8 @@ async function processImmediateLeave(
       terminationMode: undefined,
       updatedAt: now
     };
-
     await db.upsert('bookings', bookingId, finalBooking);
     console.log(`✅ Immediate leave processed. Deducted ${monthsToUse} advance month(s) and marked booking as completed`);
-
     // Update property availability
     try {
       const { checkAndRejectPendingBookings } = await import('./listing-capacity');
@@ -593,7 +522,6 @@ async function processImmediateLeave(
     } catch (statusError) {
       console.warn('⚠️ Could not update listing availability status:', statusError);
     }
-
     // Send notification to owner
     try {
       const { createOrFindConversation } = await import('./conversation-utils');
@@ -606,26 +534,21 @@ async function processImmediateLeave(
         propertyId: booking.propertyId,
         propertyTitle: booking.propertyTitle,
       });
-
       const messageId = generateId('msg');
       const messageText = `🏠 Rental Stay Ended Immediately\n\n${booking.tenantName} has ended their rental stay at ${booking.propertyTitle}.\n\n${monthsToUse} advance deposit month(s) were used to cover remaining payments.\n\nThe property is now available for new tenants.`;
-
       const messageRecord: any = {
         id: messageId,
         conversationId,
         senderId: booking.tenantId,
-        senderName: booking.tenantName,
         text: messageText,
         createdAt: now,
-        updatedAt: now,
+        
       };
-
       await db.upsert('messages', messageId, messageRecord);
       console.log('✅ Sent notification to owner about immediate leave');
     } catch (messageError) {
       console.warn('⚠️ Could not send notification to owner:', messageError);
     }
-
     // Dispatch event
     try {
       const { dispatchCustomEvent } = await import('./custom-events');
@@ -641,7 +564,6 @@ async function processImmediateLeave(
     } catch (eventError) {
       console.warn('⚠️ Could not dispatch booking completed event:', eventError);
     }
-
     // Dispatch event
     try {
       const { dispatchCustomEvent } = await import('./custom-events');
@@ -657,7 +579,6 @@ async function processImmediateLeave(
     } catch (eventError) {
       console.warn('⚠️ Could not dispatch booking completed event:', eventError);
     }
-
     return {
       success: true,
       monthsUsed: monthsToUse,
@@ -672,7 +593,6 @@ async function processImmediateLeave(
     };
   }
 }
-
 /**
  * Process immediate leave without advance deposit - just mark booking as completed
  */
@@ -686,9 +606,7 @@ async function processImmediateLeaveWithoutAdvanceDeposit(
 }> {
   try {
     console.log('💰 Processing immediate leave without advance deposit');
-
     const now = new Date().toISOString();
-
     // Mark booking as completed
     const updatedBooking: BookingRecord = {
       ...booking,
@@ -696,10 +614,8 @@ async function processImmediateLeaveWithoutAdvanceDeposit(
       completedAt: now,
       updatedAt: now
     };
-
     await db.upsert('bookings', bookingId, updatedBooking);
     console.log('✅ Booking marked as completed (immediate leave without advance deposit)');
-
     // Send notification to owner
     try {
       const { createOrFindConversation } = await import('./conversation-utils');
@@ -712,26 +628,21 @@ async function processImmediateLeaveWithoutAdvanceDeposit(
         propertyId: booking.propertyId,
         propertyTitle: booking.propertyTitle,
       });
-
       const messageId = generateId('msg');
       const messageText = `🏠 Rental Stay Ended\n\n${booking.tenantName} has ended their rental stay at ${booking.propertyTitle}.\n\nThe property is now available for new tenants.`;
-
       const messageRecord: any = {
         id: messageId,
         conversationId,
         senderId: booking.tenantId,
-        senderName: booking.tenantName,
         text: messageText,
         createdAt: now,
-        updatedAt: now,
+        
       };
-
       await db.upsert('messages', messageId, messageRecord);
       console.log('✅ Sent notification to owner about immediate leave');
     } catch (messageError) {
       console.warn('⚠️ Could not send notification to owner:', messageError);
     }
-
     // Dispatch event
     try {
       const { dispatchCustomEvent } = await import('./custom-events');
@@ -746,7 +657,6 @@ async function processImmediateLeaveWithoutAdvanceDeposit(
     } catch (eventError) {
       console.warn('⚠️ Could not dispatch booking completed event:', eventError);
     }
-
     return {
       success: true,
       message: 'Successfully ended rental stay immediately.'
@@ -759,7 +669,6 @@ async function processImmediateLeaveWithoutAdvanceDeposit(
     };
   }
 }
-
 /**
  * Process termination countdown for bookings
  * This should be called daily to check if countdown has reached 0 and automatically remove tenants
@@ -772,13 +681,11 @@ export async function processTerminationCountdown(): Promise<{
 }> {
   try {
     console.log('🔄 Processing termination countdowns...');
-    
     const allBookings = await db.list<BookingRecord>('bookings');
     const now = new Date();
     let processed = 0;
     let removed = 0;
     let errors = 0;
-    
     // Find all bookings with active termination countdown
     const bookingsWithCountdown = allBookings.filter(
       b => b.terminationInitiatedAt && 
@@ -787,21 +694,16 @@ export async function processTerminationCountdown(): Promise<{
            b.status === 'approved' && 
            b.paymentStatus === 'paid'
     );
-    
     console.log(`📋 Found ${bookingsWithCountdown.length} booking(s) with active countdown`);
-    
     for (const booking of bookingsWithCountdown) {
       try {
         processed++;
         const endDate = new Date(booking.terminationEndDate!);
-        
         // Check if countdown has reached 0
         if (now >= endDate) {
           console.log(`⏰ Countdown reached 0 for booking ${booking.id}, removing tenant...`);
-          
           // Get remaining advance months
           const remainingMonths = booking.remainingAdvanceMonths ?? booking.advanceDepositMonths ?? 0;
-          
           if (remainingMonths > 0) {
             // Process immediate leave with remaining months
             const result = await processImmediateLeave(booking.id, booking, remainingMonths);
@@ -824,7 +726,6 @@ export async function processTerminationCountdown(): Promise<{
               updatedAt: now.toISOString()
             };
             await db.upsert('bookings', booking.id, updatedBooking);
-            
             // Update property availability
             try {
               const { checkAndRejectPendingBookings } = await import('./listing-capacity');
@@ -832,7 +733,6 @@ export async function processTerminationCountdown(): Promise<{
             } catch (statusError) {
               console.warn('⚠️ Could not update listing availability status:', statusError);
             }
-            
             removed++;
             console.log(`✅ Marked booking ${booking.id} as completed (no remaining advance months)`);
           }
@@ -846,7 +746,6 @@ export async function processTerminationCountdown(): Promise<{
         console.error(`❌ Error processing countdown for booking ${booking.id}:`, error);
       }
     }
-    
     console.log(`✅ Processed ${processed} countdown(s), removed ${removed} tenant(s), ${errors} error(s)`);
     return { processed, removed, errors };
   } catch (error) {
@@ -854,7 +753,6 @@ export async function processTerminationCountdown(): Promise<{
     return { processed: 0, removed: 0, errors: 1 };
   }
 }
-
 /**
  * Get termination countdown information for a booking
  */
@@ -869,12 +767,10 @@ export async function getTerminationCountdownInfo(bookingId: string): Promise<{
     if (!booking || !booking.terminationInitiatedAt || !booking.terminationEndDate) {
       return { hasCountdown: false };
     }
-    
     const endDate = new Date(booking.terminationEndDate);
     const now = new Date();
     const daysRemaining = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
     const remainingMonths = booking.remainingAdvanceMonths ?? booking.advanceDepositMonths ?? 0;
-    
     return {
       hasCountdown: true,
       daysRemaining: Math.max(0, daysRemaining),
@@ -886,4 +782,3 @@ export async function getTerminationCountdownInfo(bookingId: string): Promise<{
     return { hasCountdown: false };
   }
 }
-

@@ -589,7 +589,7 @@ export default function BookingsPage() {
                         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: '48%' }}>
                           <Phone size={12} color={designTokens.colors.textSecondary} />
                           <Text style={[sharedStyles.statLabel, { marginLeft: designTokens.spacing.xs, fontSize: designTokens.typography.xs }]}>
-                            {booking.tenantPhone}
+                            {booking.tenantPhone && booking.tenantPhone !== '+63' ? booking.tenantPhone : 'Not provided'}
                           </Text>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: '48%' }}>

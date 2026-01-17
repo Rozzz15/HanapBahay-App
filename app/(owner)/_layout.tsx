@@ -1,7 +1,6 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { useEffect, useState, useRef } from 'react';
-import { useRouter } from 'expo-router';
 import { View, Text, ActivityIndicator, Linking, Alert, Platform, Modal, TouchableOpacity, ScrollView, TextInput, Image, Pressable } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import OwnerBottomNav from '../../components/OwnerBottomNav';
@@ -70,9 +69,17 @@ export default function OwnerLayout() {
 
   useEffect(() => {
     const checkOwnerAccess = async () => {
+      console.log('⏱️ LAYOUT: checkOwnerAccess called', {
+        hasChecked: hasCheckedRef.current,
+        isRedirecting: isRedirectingRef.current,
+        showModal: showApplicationModal,
+        isLoading
+      });
+      
       // Prevent multiple simultaneous checks or re-checking if modal is already shown for this user
       if (hasCheckedRef.current || isRedirectingRef.current || 
           (showApplicationModal && modalShownForUserRef.current === user?.id)) {
+        console.log('⏱️ LAYOUT: Skipping check (already done)');
         return;
       }
 
@@ -94,6 +101,10 @@ export default function OwnerLayout() {
         // Check if owner application is approved - use single optimized check
         hasCheckedRef.current = true;
         setIsCheckingApproval(true);
+        
+        const approvalCheckStart = Date.now();
+        console.log('⏱️ LAYOUT: Starting approval check...');
+        
         try {
           // Get application once and derive all needed info from it
           // This is much faster than 3 separate database queries
@@ -101,6 +112,7 @@ export default function OwnerLayout() {
             setTimeout(() => reject(new Error('Approval check timeout')), 5000); // Reduced from 10s to 5s
           });
           
+          const appFetchStart = Date.now();
           const applicationPromise = getOwnerApplication(user.id);
           
           // Race against timeout
@@ -108,6 +120,8 @@ export default function OwnerLayout() {
             applicationPromise,
             timeoutPromise
           ]) as OwnerApplicationRecord | null;
+          
+          console.log(`⏱️ LAYOUT: getOwnerApplication took ${Date.now() - appFetchStart}ms`);
           
           // Derive approval status from application
           const isApproved = application?.status === 'approved' || false;
@@ -166,8 +180,10 @@ export default function OwnerLayout() {
           }
           
           console.log('✅ Owner layout: Owner application approved, allowing access');
+          console.log(`⏱️ LAYOUT: Total approval check took ${Date.now() - approvalCheckStart}ms`);
         } catch (error) {
           console.error('❌ Error checking owner approval:', error);
+          console.log(`⏱️ LAYOUT: Approval check failed after ${Date.now() - approvalCheckStart}ms`);
           setIsCheckingApproval(false);
           
           // If timeout error, show specific message

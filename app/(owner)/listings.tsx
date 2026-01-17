@@ -254,7 +254,9 @@ export default function ListingsPage() {
                           source={{ uri: listing.coverPhoto }} 
                           style={styles.coverImage}
                           resizeMode="cover"
-                          showSkeleton={true}
+                          // Cover photos are above-the-fold and should never appear "washed out"
+                          // due to skeleton overlays on slower/flaky loads.
+                          showSkeleton={false}
                           fallbackIcon="home"
                           borderRadius={0}
                         />
@@ -280,10 +282,6 @@ export default function ListingsPage() {
                         <View style={styles.statItem}>
                           <Eye size={14} color="#FFFFFF" />
                           <Text style={styles.statText}>{String(listing.views || 0)}</Text>
-                        </View>
-                        <View style={styles.statItem}>
-                          <MessageSquare size={14} color="#FFFFFF" />
-                          <Text style={styles.statText}>{String(listing.inquiries || 0)}</Text>
                         </View>
                       </View>
                     </View>

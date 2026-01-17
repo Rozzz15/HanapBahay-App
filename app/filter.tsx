@@ -85,7 +85,7 @@ export default function FilterScreen() {
               )}
             </View>
             <Text style={styles.sectionDescription}>
-              Choose the type of property you're looking for
+              Choose the type of property you&apos;re looking for
             </Text>
             <ButtonCarousel
               options={propertyTypes}

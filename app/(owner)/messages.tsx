@@ -8,7 +8,9 @@ import {
     TextInput, 
     Image, 
     ActivityIndicator,
-    RefreshControl
+    RefreshControl,
+    Modal,
+    Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -20,6 +22,7 @@ import { ConversationRecord, MessageRecord } from '@/types';
 import { createOrFindConversation } from '@/utils/conversation-utils';
 import { loadUserProfilePhoto } from '@/utils/user-profile-photos';
 import TenantInfoModal from '@/components/TenantInfoModal';
+import OwnerChatRoomDirect from './chat-room/[id]';
 
 interface Conversation {
     id: string;
@@ -81,6 +84,14 @@ export default function OwnerMessages() {
         email?: string;
         phone?: string;
         avatar?: string;
+    } | null>(null);
+    
+    // State-based navigation (bypass slow Expo Router)
+    const [selectedConversation, setSelectedConversation] = useState<{
+        id: string;
+        tenantName: string;
+        tenantAvatar: string;
+        propertyTitle: string;
     } | null>(null);
 
     const loadConversations = useCallback(async () => {
@@ -164,15 +175,9 @@ export default function OwnerMessages() {
                             if (tenantRecord) {
                                 tenantName = (tenantRecord as any).name || tenantName;
                                 
-                                // Load profile photo
-                                try {
-                                    const photoUri = await loadUserProfilePhoto(tenantId);
-                                    if (photoUri && photoUri.trim() !== '' && photoUri.length > 10 && isValidImageUri(photoUri)) {
-                                        tenantAvatar = photoUri.trim();
-                                    }
-                                } catch (photoError) {
-                                    console.log('⚠️ Could not load tenant profile photo:', photoError);
-                                }
+                                // DON'T load profile photo here - it's too slow!
+                                // Load it later in the background after list is displayed
+                                // Profile photos will be loaded progressively
                             }
                         }
                     } catch (error) {
@@ -275,6 +280,16 @@ export default function OwnerMessages() {
             // Show ALL conversations - don't filter by hasMessages, show if they have lastMessageText or messages
             const conversationsWithActualMessages = (await Promise.all(
                 conversationsWithDetails.map(async (conv) => {
+                    // Filter out rating/review conversations (they shouldn't appear in messages)
+                    const isRatingConversation = (conv as any).type === 'rating' || 
+                                                 (conv as any).purpose === 'rating' ||
+                                                 (conv as any).is_rating === true;
+                    
+                    if (isRatingConversation) {
+                        console.log(`🚫 Filtering out rating conversation ${conv.id}`);
+                        return null;
+                    }
+                    
                     // Show conversation if it has messages OR has lastMessageText
                     const hasMessages = (conv as any).hasMessages;
                     const hasLastMessage = conv.lastMessage && conv.lastMessage !== 'Start conversation' && conv.lastMessage.trim() !== '';
@@ -320,6 +335,26 @@ export default function OwnerMessages() {
             setConversations(conversationsWithActualMessages);
             console.log(`✅ Loaded ${conversationsWithActualMessages.length} conversations with messages`);
             
+            // Load profile photos in background (non-blocking)
+            setTimeout(() => {
+                conversationsWithActualMessages.forEach(async (conv, index) => {
+                    if (conv.tenantId) {
+                        try {
+                            const photoUri = await loadUserProfilePhoto(conv.tenantId);
+                            if (photoUri && photoUri.trim() !== '' && photoUri.length > 10 && isValidImageUri(photoUri)) {
+                                // Update conversation with avatar
+                                setConversations(prev => prev.map(c => 
+                                    c.id === conv.id ? { ...c, tenantAvatar: photoUri.trim() } : c
+                                ));
+                            }
+                        } catch (error) {
+                            // Ignore photo loading errors
+                        }
+                    }
+                });
+            }, 100);
+
+            
         } catch (error) {
             console.error('❌ Error loading conversations:', error);
             showAlert('Error', 'Failed to load conversations');
@@ -333,10 +368,11 @@ export default function OwnerMessages() {
             if (user?.id) {
                 loadConversations();
                 
-                // Set up interval to check for new messages every 3 seconds
+                // Set up interval to check for new messages every 60 seconds (1 minute)
+                // Increased from 15s to prevent typed messages from being cleared
                 const interval = setInterval(() => {
                     loadConversations();
-                }, 3000);
+                }, 60000);
                 
                 return () => clearInterval(interval);
             }
@@ -355,36 +391,80 @@ export default function OwnerMessages() {
         (conv.propertyTitle && conv.propertyTitle.toLowerCase().includes(searchQuery.toLowerCase()))
     );
 
-    const handleChatPress = async (conversation: Conversation) => {
-        // Mark as read
-        try {
-            const existingConv = await db.get('conversations', conversation.id);
-            if (existingConv) {
-                await db.upsert('conversations', conversation.id, {
-                    ...existingConv,
-                    unreadByOwner: 0,
-                    lastReadByOwner: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                });
-            }
+    const handleChatPress = (conversation: Conversation) => {
+        console.log('🔵🔵🔵 USER CLICKED CONVERSATION - handleChatPress called');
+        const clickStartTime = Date.now();
+        
+        console.log('⏱️ MESSAGES: Using direct state navigation (bypassing router)...');
+        
+        // BYPASS EXPO ROUTER - Use state instead (instant!)
+        setSelectedConversation({
+            id: conversation.id,
+            tenantName: conversation.tenantName || '',
+            tenantAvatar: conversation.tenantAvatar || '',
+            propertyTitle: conversation.propertyTitle || '',
+        });
+        
+        console.log(`⏱️ MESSAGES: State navigation took ${Date.now() - clickStartTime}ms`);
 
-            setConversations(prev => prev.map(c => 
-                c.id === conversation.id ? { ...c, unreadCount: 0 } : c
-            ));
-        } catch (error) {
-            console.error('Error marking conversation as read:', error);
-        }
+        // Mark as read in the background (after navigation)
+        setTimeout(async () => {
+            try {
+                const existingConv = await db.get('conversations', conversation.id);
+                if (existingConv) {
+                    await db.upsert('conversations', conversation.id, {
+                        ...existingConv,
+                        unreadByOwner: 0,
+                        lastReadByOwner: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
+                    });
+                }
 
-        // Navigate to chat room
-        router.push({
-            pathname: `/(owner)/chat-room/${conversation.id}` as any,
-            params: {
-                conversationId: conversation.id,
-                tenantName: conversation.tenantName,
-                tenantAvatar: conversation.tenantAvatar || '',
-                propertyTitle: conversation.propertyTitle || '',
+                setConversations(prev => prev.map(c => 
+                    c.id === conversation.id ? { ...c, unreadCount: 0 } : c
+                ));
+            } catch (error) {
+                console.error('Error marking conversation as read:', error);
             }
-        } as any);
+        }, 0);
+    };
+
+    const handleDeleteConversation = (conversation: Conversation) => {
+        Alert.alert(
+            'Delete Conversation',
+            `Are you sure you want to delete this conversation with ${conversation.tenantName}? This action cannot be undone.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            // Delete conversation
+                            await db.remove('conversations', conversation.id);
+                            
+                            // Delete all messages in this conversation
+                            const allMessages = await db.list('messages');
+                            const conversationMessages = allMessages.filter((msg: any) => 
+                                msg.conversationId === conversation.id || msg.conversation_id === conversation.id
+                            );
+                            
+                            for (const message of conversationMessages) {
+                                await db.remove('messages', message.id);
+                            }
+
+                            // Update local state
+                            setConversations(prev => prev.filter(c => c.id !== conversation.id));
+                            
+                            Alert.alert('Done', 'Conversation has been deleted');
+                        } catch (error) {
+                            console.error('Error deleting conversation:', error);
+                            Alert.alert('Error', 'Failed to delete conversation');
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const formatTime = (timeString?: string) => {
@@ -406,6 +486,24 @@ export default function OwnerMessages() {
             return 'Now';
         }
     };
+
+    // BYPASS EXPO ROUTER: Render chat directly (instant!)
+    if (selectedConversation) {
+        console.log('⏱️ MESSAGES: Rendering chat component directly (bypassing router)');
+        
+        return (
+            <OwnerChatRoomDirect 
+                conversationId={selectedConversation.id}
+                tenantName={selectedConversation.tenantName}
+                tenantAvatar={selectedConversation.tenantAvatar}
+                propertyTitle={selectedConversation.propertyTitle}
+                onBack={() => {
+                    console.log('⏱️ MESSAGES: Back button pressed');
+                    setSelectedConversation(null);
+                }}
+            />
+        );
+    }
 
     if (loading) {
         return (
@@ -468,7 +566,11 @@ export default function OwnerMessages() {
                                 <TouchableOpacity 
                                     key={conversation.id} 
                                     style={styles.conversationCard}
-                                    onPress={() => handleChatPress(conversation)}
+                                    onPress={() => {
+                                        console.log('🎯 TouchableOpacity onPress fired');
+                                        handleChatPress(conversation);
+                                    }}
+                                    onLongPress={() => handleDeleteConversation(conversation)}
                                     activeOpacity={0.7}
                                 >
                                     <View style={styles.conversationContent}>

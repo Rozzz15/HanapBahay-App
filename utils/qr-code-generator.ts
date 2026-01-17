@@ -4,7 +4,7 @@
  */
 
 import QRCode from 'react-native-qrcode-svg';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { RentPayment } from './tenant-payments';
 import { PaymentAccount } from './owner-dashboard';
 import { Platform } from 'react-native';

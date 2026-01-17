@@ -1,43 +1,9 @@
 import { db, generateId } from './db';
 import { PublishedListingRecord, ConversationRecord, MessageRecord, DbUserRecord, OwnerProfileRecord, TenantProfileRecord } from '../types';
 
-// Lazy-load supabase client to avoid Metro bundling issues
-// Create a mock supabase client that's always available
-const createMockSupabase = () => ({
-  from: () => ({
-    select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }),
-    insert: () => Promise.resolve({ data: null, error: null }),
-    update: () => Promise.resolve({ data: null, error: null }),
-    delete: () => Promise.resolve({ data: null, error: null }),
-  }),
-});
-
-// Lazy-load supabase client only when needed (not at module load time)
-let supabaseCache: any = null;
-const getSupabase = async () => {
-  if (supabaseCache) {
-    return supabaseCache;
-  }
-  
-  try {
-    if (typeof window !== 'undefined') {
-      // Web environment - use mock
-      supabaseCache = createMockSupabase();
-    } else {
-      // Mobile environment - try to use real Supabase (lazy import)
-      const supabaseClient = await import('./supabase-client');
-      supabaseCache = supabaseClient.supabase || supabaseClient.default || createMockSupabase();
-    }
-  } catch (error) {
-    // Fallback to mock if import fails
-    supabaseCache = createMockSupabase();
-  }
-  
-  return supabaseCache;
-};
-
 // For synchronous access, use mock (most functions don't actually use supabase)
-const supabase = createMockSupabase();
+// Removed mock supabase - using real supabase client
+import { supabase } from './supabase-client';
 
 // Owner Dashboard Database Operations
 
@@ -130,18 +96,20 @@ export interface PaymentAccount {
 export async function getOwnerDashboardStats(ownerId: string): Promise<OwnerDashboardStats> {
   try {
     // Get from local database instead of Supabase
-    const { db } = await import('./db');
-    
     // Get all listings for this owner
-    const allListings = await db.list<any>('published_listings');
-    const ownerListings = allListings.filter(listing => listing.userId === ownerId);
+    const { data: allListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); return []; }
+    const ownerListings = allListings.filter(listing => listing.userId === ownerId || listing.user_id === ownerId);
     
     const totalListings = ownerListings.length;
     const totalViews = ownerListings.reduce((sum, listing) => sum + (listing.views || 0), 0);
     
-    // Get total bookings for this owner (all statuses)
-    const allBookingsData = await db.list<any>('bookings');
-    const ownerBookings = allBookingsData.filter(booking => booking.ownerId === ownerId);
+    // Get total bookings for this owner (all statuses, excluding soft-deleted ones)
+    const { data: allBookingsData = [], error: bookingsError } = await supabase.from('bookings').select('*'); if (bookingsError) { console.error('Error fetching bookings:', bookingsError); }
+    // Filter by owner_id (snake_case) or ownerId (camelCase) and exclude soft-deleted bookings
+    const ownerBookings = allBookingsData.filter(booking => 
+      (booking.owner_id === ownerId || booking.ownerId === ownerId) && 
+      !booking.is_deleted && !booking.isDeleted
+    );
     const totalBookings = ownerBookings.length;
 
     // Get monthly revenue from:
@@ -151,13 +119,13 @@ export async function getOwnerDashboardStats(ownerId: string): Promise<OwnerDash
     
     // Calculate revenue from booking deposits (initial payments) created this month
     const paidOwnerBookings = allBookingsData.filter(booking => 
-      booking.ownerId === ownerId && 
+      (booking.owner_id === ownerId || booking.ownerId === ownerId) && 
       booking.status === 'approved' &&
-      booking.paymentStatus === 'paid' && // ONLY count paid bookings in revenue
-      booking.createdAt && 
-      booking.createdAt.startsWith(currentMonth)
+      (booking.payment_status === 'paid' || booking.paymentStatus === 'paid') && // ONLY count paid bookings in revenue
+      (booking.created_at || booking.createdAt) && 
+      ((booking.created_at || booking.createdAt).startsWith(currentMonth))
     );
-    const bookingDepositRevenue = paidOwnerBookings.reduce((sum, booking) => sum + (booking.totalAmount || 0), 0);
+    const bookingDepositRevenue = paidOwnerBookings.reduce((sum, booking) => sum + (booking.total_amount || booking.totalAmount || 0), 0);
     
     // Calculate revenue from rent payments (monthly payments) paid this month
     const { getRentPaymentsByOwner } = await import('./tenant-payments');
@@ -179,7 +147,7 @@ export async function getOwnerDashboardStats(ownerId: string): Promise<OwnerDash
     const monthlyRevenue = bookingDepositRevenue + rentPaymentRevenue;
     
     console.log('💰 Revenue calculation:', {
-      totalBookings: allBookingsData.filter((b: any) => b.ownerId === ownerId && b.status === 'approved').length,
+      totalBookings: allBookingsData.filter((b: any) => (b.owner_id === ownerId || b.ownerId === ownerId) && b.status === 'approved').length,
       paidBookings: paidOwnerBookings.length,
       bookingDepositRevenue,
       paidRentPayments: paidRentPayments.length,
@@ -216,22 +184,22 @@ export async function getOwnerDashboardStats(ownerId: string): Promise<OwnerDash
 export async function getOwnerListings(ownerId: string): Promise<OwnerListing[]> {
   try {
     // Get from local database instead of Supabase
-    const { db } = await import('./db');
     const { loadPropertyMedia } = await import('./media-storage');
-    const allListings = await db.list<any>('published_listings');
+    const { data: allListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); return []; }
     
     // Filter by owner ID and sort by creation date
+    // Check both userId and user_id (camelCase and snake_case) for compatibility
     const filteredListings = allListings
-      .filter(listing => listing.userId === ownerId)
+      .filter(listing => listing.userId === ownerId || listing.user_id === ownerId)
       .sort((a, b) => {
-        const dateA = new Date(a.createdAt || 0).getTime();
-        const dateB = new Date(b.createdAt || 0).getTime();
+        const dateA = new Date(a.createdAt || a.created_at || 0).getTime();
+        const dateB = new Date(b.createdAt || b.created_at || 0).getTime();
         return dateB - dateA; // Newest first
       });
 
     // Load media data for each listing - PRIORITIZE DATABASE LIKE TENANT PROFILE PICTURES
     const ownerListings = await Promise.all(filteredListings.map(async (listing) => {
-      let coverPhoto = listing.coverPhoto;
+      let coverPhoto = listing.cover_photo || listing.coverPhoto; // Fixed: Read from snake_case column
       let photos = listing.photos || [];
       let videos = listing.videos || [];
 
@@ -280,7 +248,7 @@ export async function getOwnerListings(ownerId: string): Promise<OwnerListing[]>
         userId: listing.userId,
         propertyType: listing.propertyType,
         address: listing.address,
-        monthlyRent: listing.monthlyRent,
+        monthlyRent: listing.monthly_rent || listing.monthlyRent || 0, // Fixed: Read from snake_case column
         status: listing.status,
         views: listing.views || 0,
         inquiries: listing.inquiries || 0,
@@ -353,7 +321,7 @@ export async function updateOwnerListing(ownerId: string, listingId: string, upd
         updatedAt: new Date().toISOString()
       })
       .eq('id', listingId)
-      .eq('userId', ownerId);
+      .eq('user_id', ownerId);
 
     if (error) throw error;
     return true;
@@ -366,15 +334,15 @@ export async function updateOwnerListing(ownerId: string, listingId: string, upd
 export async function deleteOwnerListing(ownerId: string, listingId: string): Promise<boolean> {
   try {
     // Get from local database and verify ownership
-    const { db } = await import('./db');
-    const listing = await db.get<any>('published_listings', listingId);
+    const { data: listing, error: listingError } = await supabase.from('published_listings').select('*').eq('id', listingId).single(); if (listingError) { console.error('Error fetching listing:', listingError); }
     
     if (!listing) {
       console.error('Listing not found');
       return false;
     }
     
-    if (listing.userId !== ownerId) {
+    // Check both userId and user_id (camelCase and snake_case) for compatibility
+    if (listing.userId !== ownerId && listing.user_id !== ownerId) {
       console.error('Unauthorized: Listing does not belong to this owner');
       return false;
     }
@@ -397,15 +365,15 @@ export async function deleteOwnerListing(ownerId: string, listingId: string): Pr
     // Also remove from any other collections that might reference this listing
     try {
       // Remove from favorites
-      const favorites = await db.list('user_favorites');
+      const { data: favorites = [], error: favError } = await supabase.from('favorites').select('*'); if (favError) { console.error('Error fetching favorites:', favError); }
       for (const favorite of favorites) {
-        if (favorite.propertyId === listingId) {
-          await db.remove('user_favorites', favorite.id);
+        if (favorite.propertyId === listingId || favorite.property_id === listingId) {
+          await db.remove('favorites', favorite.id);
         }
       }
       
       // Soft delete related bookings (preserve for analytics)
-      const bookings = await db.list('bookings');
+      const { data: bookings = [], error: bookError } = await supabase.from('bookings').select('*'); if (bookError) { console.error('Error fetching bookings:', bookError); }
       const now = new Date().toISOString();
       for (const booking of bookings) {
         if (booking.propertyId === listingId && !booking.isDeleted) {
@@ -449,8 +417,8 @@ export async function getOwnerBookings(ownerId: string): Promise<OwnerBooking[]>
     const { data, error } = await supabase
       .from('bookings')
       .select('*')
-      .eq('ownerId', ownerId)
-      .order('createdAt', { ascending: false });
+      .eq('owner_id', ownerId)
+      .order('created_at', { ascending: false });
 
     if (error) throw error;
     return data || [];
@@ -481,7 +449,7 @@ export async function updateBookingStatus(
       .from('bookings')
       .update(updateData)
       .eq('id', bookingId)
-      .eq('ownerId', ownerId);
+      .eq('owner_id', ownerId);
 
     if (error) throw error;
     return true;
@@ -497,7 +465,7 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
     console.log('📥 Loading owner messages for:', ownerId);
     
     // Get all conversations
-    const conversations = await db.list('conversations');
+    const { data: conversations = [], error: convError } = await supabase.from('conversations').select('*'); if (convError) { console.error('Error fetching conversations:', convError); }
     console.log('💬 All conversations:', conversations.length);
     console.log('💬 Conversations data:', conversations);
     
@@ -528,12 +496,12 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
         }
       }
       // Reload conversations after migration
-      const updatedConversations = await db.list('conversations');
+      const { data: updatedConversations = [], error: updError } = await supabase.from('conversations').select('*'); if (updError) { console.error('Error fetching conversations:', updError); }
       console.log('🔄 Reloaded conversations after migration:', updatedConversations.length);
     }
     
     // Normalize conversations and filter where this user is the owner
-    const finalConversations = needsMigration ? await db.list('conversations') : conversations;
+    const finalConversationsData = needsMigration ? (await supabase.from('conversations').select('*')).data : conversations; const finalConversations = finalConversationsData || conversations;
     const normalizedConvs = finalConversations.map(conv => ({
       id: (conv as any).id,
       ownerId: (conv as any).ownerId || (conv as any).owner_id || '',
@@ -576,7 +544,7 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
     console.log('💬 Owner conversations data:', ownerConversations);
     
     // Get all messages and normalize them
-    const allMessages = await db.list('messages');
+    const { data: allMessages = [], error: msgError } = await supabase.from('messages').select('*'); if (msgError) { console.error('Error fetching messages:', msgError); }
     console.log('📨 All messages:', allMessages.length);
     console.log('📨 Messages data:', allMessages);
     
@@ -596,7 +564,7 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
     }));
     
     // Get all users to resolve tenant names
-    const allUsers = await db.list('users');
+    const { data: allUsers = [], error: usersError } = await supabase.from('users').select('*'); if (usersError) { console.error('Error fetching users:', usersError); }
     console.log('👥 All users:', allUsers.length);
     
     const ownerMessages: OwnerMessage[] = [];
@@ -693,7 +661,6 @@ export async function sendOwnerMessage(
       senderId: senderId,
       text: text.trim(),
       type: 'message' as const,
-      readBy: [senderId],
       createdAt: now,
       propertyId: '',
       propertyTitle: ''
@@ -704,7 +671,7 @@ export async function sendOwnerMessage(
     console.log('✅ Owner message saved to database');
 
     // Update conversation
-    const conversation = await db.get('conversations', conversationId);
+    const { data: conversation, error: convGetError } = await supabase.from('conversations').select('*').eq('id', conversationId).single(); if (convGetError) { console.error('Error fetching conversation:', convGetError); }
     if (conversation) {
       const conv = conversation as any;
       const normalizedConv = {
@@ -741,7 +708,7 @@ export async function sendOwnerMessage(
 // Payment Accounts - Using local db instead of Supabase for now
 export async function getOwnerPaymentAccounts(ownerId: string): Promise<PaymentAccount[]> {
   try {
-    const allAccounts = await db.list('payment_accounts');
+    const { data: allAccounts = [], error: accountsError } = await supabase.from('payment_accounts').select('*'); if (accountsError) { console.error('Error fetching payment accounts:', accountsError); return []; }
     return allAccounts
       .filter((acc: any) => acc.ownerId === ownerId)
       .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()) as PaymentAccount[];
@@ -776,7 +743,7 @@ export async function updateOwnerPaymentAccount(
   updateData: any
 ): Promise<boolean> {
   try {
-    const existing = await db.get('payment_accounts', accountId);
+    const { data: existing, error: existError } = await supabase.from('payment_accounts').select('*').eq('id', accountId).single(); if (existError && existError.code !== 'PGRST116') { console.error('Error fetching payment account:', existError); }
     if (!existing || (existing as any).ownerId !== ownerId) return false;
     
     await db.upsert('payment_accounts', accountId, {
@@ -793,7 +760,7 @@ export async function updateOwnerPaymentAccount(
 
 export async function deleteOwnerPaymentAccount(ownerId: string, accountId: string): Promise<boolean> {
   try {
-    const existing = await db.get('payment_accounts', accountId);
+    const { data: existing, error: existError } = await supabase.from('payment_accounts').select('*').eq('id', accountId).single(); if (existError && existError.code !== 'PGRST116') { console.error('Error fetching payment account:', existError); }
     if (!existing || (existing as any).ownerId !== ownerId) return false;
     
     await db.delete('payment_accounts', accountId);
@@ -807,8 +774,8 @@ export async function deleteOwnerPaymentAccount(ownerId: string, accountId: stri
 // Check if owner has listings
 export async function hasOwnerListings(ownerId: string): Promise<boolean> {
   try {
-    const allListings = await db.list('published_listings');
-    return allListings.some((listing: any) => listing.userId === ownerId);
+    const { data: allListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); return []; }
+    return allListings.some((listing: any) => listing.user_id === ownerId || listing.userId === ownerId);
   } catch (error) {
     console.error('Error checking owner listings:', error);
     return false;
@@ -818,7 +785,7 @@ export async function hasOwnerListings(ownerId: string): Promise<boolean> {
 // Get owner's payment details for booking
 export async function getOwnerPaymentDetails(ownerId: string): Promise<PaymentAccount[]> {
   try {
-    const allAccounts = await db.list('payment_accounts');
+    const { data: allAccounts = [], error: accountsError } = await supabase.from('payment_accounts').select('*'); if (accountsError) { console.error('Error fetching payment accounts:', accountsError); return []; }
     return allAccounts
       .filter((acc: any) => acc.ownerId === ownerId && acc.isActive)
       .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()) as PaymentAccount[];
@@ -827,3 +794,14 @@ export async function getOwnerPaymentDetails(ownerId: string): Promise<PaymentAc
     return [];
   }
 }
+
+
+
+
+
+
+
+
+
+
+

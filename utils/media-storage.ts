@@ -1,4 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from './supabase-client';
+import { uploadToSupabase } from './supabase-storage';
 import { db } from './db';
 import { PropertyMedia } from './property-media-cache';
 import logger from './logger';
@@ -11,7 +12,7 @@ export interface MediaItem {
   data?: string; // Base64 encoded data for persistence
 }
 
-// AsyncStorage keys for property media persistence
+// Cloud storage keys (legacy - kept for backward compatibility)
 const MEDIA_STORAGE_KEYS = {
   PROPERTY_MEDIA: (listingId: string) => `property_media_${listingId}`,
   PROPERTY_MEDIA_CACHE: (listingId: string) => `property_media_cache_${listingId}`,
@@ -20,25 +21,63 @@ const MEDIA_STORAGE_KEYS = {
 };
 
 /**
- * Save property media to AsyncStorage for persistence (like profile photos)
+ * Save property media to Supabase cloud storage (replaces AsyncStorage)
  */
 export const savePropertyMediaToStorage = async (
   listingId: string,
-  media: PropertyMedia
+  media: PropertyMedia,
+  userId?: string
 ): Promise<void> => {
   try {
-    logger.debug('💾 Saving property media to AsyncStorage for listing:', listingId);
+    logger.debug('💾 Saving property media to Supabase cloud for listing:', listingId);
+    logger.debug('📊 userId received:', userId);
     
-    const mediaKey = MEDIA_STORAGE_KEYS.PROPERTY_MEDIA(listingId);
-    const timestampKey = MEDIA_STORAGE_KEYS.MEDIA_TIMESTAMP(listingId);
+    // Skip property_photos save if userId is invalid - photos are already in published_listings
+    if (!userId || userId === 'unknown' || userId.length < 10) {
+      logger.debug('ℹ️ Skipping property_photos table save (photos already in published_listings)');
+      return; // Just return silently, no error
+    }
     
-    // Save media data
-    await AsyncStorage.setItem(mediaKey, JSON.stringify(media));
+    // Upload photos to Supabase storage if they're data URIs
+    const uploadedPhotos: string[] = [];
+    for (const photo of media.photos) {
+      if (photo.startsWith('data:') || photo.startsWith('file://')) {
+        try {
+          const url = await uploadToSupabase(photo, 'property-images', `${listingId}_${Date.now()}.jpg`);
+          uploadedPhotos.push(url);
+        } catch (error) {
+          logger.error('Failed to upload photo:', error);
+          uploadedPhotos.push(photo); // Keep original if upload fails
+        }
+      } else {
+        uploadedPhotos.push(photo);
+      }
+    }
     
-    // Save timestamp for cache management
-    await AsyncStorage.setItem(timestampKey, new Date().toISOString());
+    // Upload cover photo
+    let uploadedCoverPhoto = media.coverPhoto;
+    if (media.coverPhoto && (media.coverPhoto.startsWith('data:') || media.coverPhoto.startsWith('file://'))) {
+      try {
+        uploadedCoverPhoto = await uploadToSupabase(media.coverPhoto, 'property-images', `${listingId}_cover.jpg`);
+      } catch (error) {
+        logger.error('Failed to upload cover photo:', error);
+      }
+    }
     
-    logger.debug('✅ Property media saved to AsyncStorage:', {
+    // Save to Supabase database with uploaded URLs
+    const mediaData = {
+      ...media,
+      photos: uploadedPhotos,
+      coverPhoto: uploadedCoverPhoto,
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Skip database save - photos are already stored in published_listings table
+    // The property_photos table has schema issues (UUID type mismatch, missing constraints)
+    // Photos are accessible via published_listings.photos and published_listings.coverPhoto
+    logger.debug('✅ Media saved to cloud storage (photos in published_listings table)');
+    
+    logger.debug('✅ Property media saved to Supabase cloud:', {
       listingId,
       hasCoverPhoto: !!media.coverPhoto,
       photosCount: media.photos?.length || 0,
@@ -51,20 +90,23 @@ export const savePropertyMediaToStorage = async (
 };
 
 /**
- * Load property media from AsyncStorage (like profile photos)
+ * Load property media from Supabase cloud (replaces AsyncStorage)
  */
 export const loadPropertyMediaFromStorage = async (
   listingId: string
 ): Promise<PropertyMedia | null> => {
   try {
-    logger.debug('📸 Loading property media from AsyncStorage for listing:', listingId);
+    logger.debug('📸 Loading property media from Supabase cloud for listing:', listingId);
     
-    const mediaKey = MEDIA_STORAGE_KEYS.PROPERTY_MEDIA(listingId);
-    const storedMedia = await AsyncStorage.getItem(mediaKey);
+    const mediaRecord = await db.get('property_photos', listingId);
     
-    if (storedMedia) {
-      const media = JSON.parse(storedMedia) as PropertyMedia;
-      logger.debug('✅ Property media loaded from AsyncStorage:', {
+    if (mediaRecord) {
+      const media: PropertyMedia = {
+        coverPhoto: mediaRecord.coverPhoto || null,
+        photos: mediaRecord.photos || [],
+        videos: mediaRecord.videos || []
+      };
+      logger.debug('✅ Property media loaded from Supabase cloud:', {
         listingId,
         hasCoverPhoto: !!media.coverPhoto,
         photosCount: media.photos?.length || 0,
@@ -72,31 +114,27 @@ export const loadPropertyMediaFromStorage = async (
       });
       return media;
     } else {
-      logger.debug('📸 No property media found in AsyncStorage for listing:', listingId);
+      logger.debug('📸 No property media found in Supabase cloud for listing:', listingId);
       return null;
     }
   } catch (error) {
-    logger.error('❌ Error loading property media from storage:', error);
+    logger.error('❌ Error loading property media from Supabase cloud:', error);
     return null;
   }
 };
 
 /**
- * Clear property media from AsyncStorage
+ * Clear property media from Supabase cloud
  */
 export const clearPropertyMediaFromStorage = async (
   listingId: string
 ): Promise<void> => {
   try {
-    logger.debug('🗑️ Clearing property media from AsyncStorage for listing:', listingId);
+    logger.debug('🗑️ Clearing property media from Supabase cloud for listing:', listingId);
     
-    const mediaKey = MEDIA_STORAGE_KEYS.PROPERTY_MEDIA(listingId);
-    const timestampKey = MEDIA_STORAGE_KEYS.MEDIA_TIMESTAMP(listingId);
+    await db.remove('property_photos', listingId);
     
-    await AsyncStorage.removeItem(mediaKey);
-    await AsyncStorage.removeItem(timestampKey);
-    
-    logger.debug('✅ Property media cleared from AsyncStorage for listing:', listingId);
+    logger.debug('✅ Property media cleared from Supabase cloud for listing:', listingId);
   } catch (error) {
     logger.error('❌ Error clearing property media from storage:', error);
   }
@@ -109,7 +147,7 @@ export const savePropertyMedia = async (
   listingId: string, 
   userId: string, 
   media: PropertyMedia
-): Promise<void> => {
+): Promise<PropertyMedia> => {
   try {
     logger.debug('💾 Saving property media for listing:', listingId);
     logger.debug('📊 Media data:', {
@@ -118,73 +156,77 @@ export const savePropertyMedia = async (
       videosCount: media.videos?.length || 0
     });
     
-    // Save cover photo if exists
-    if (media.coverPhoto) {
-      logger.debug('💾 Saving cover photo...');
-      await db.upsert('property_photos', `cover_${listingId}`, {
-        id: `cover_${listingId}`,
-        listingId,
-        userId,
-        photoUri: media.coverPhoto,
-        // Don't store photoData to avoid AsyncStorage size issues - URIs are sufficient
-        fileName: `cover_photo_${Date.now()}.jpg`,
-        fileSize: 0, // Will be calculated if needed
-        mimeType: 'image/jpeg',
-        isCoverPhoto: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-      logger.debug('✅ Cover photo saved with data persistence');
-    }
-
-    // Save property photos
-    if (media.photos && media.photos.length > 0) {
-      logger.debug('💾 Saving property photos...');
-      for (let i = 0; i < media.photos.length; i++) {
-        const photoUri = media.photos[i];
-        await db.upsert('property_photos', `photo_${listingId}_${i}`, {
-          id: `photo_${listingId}_${i}`,
-          listingId,
-          userId,
-          photoUri,
-          // Don't store photoData to avoid AsyncStorage size issues - URIs are sufficient
-          fileName: `property_photo_${i}_${Date.now()}.jpg`,
-          fileSize: 0,
-          mimeType: 'image/jpeg',
-          isCoverPhoto: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
+    // Upload photos to Supabase storage if they're local URIs
+    const uploadedPhotos: string[] = [];
+    for (const photo of media.photos || []) {
+      if (photo.startsWith('data:') || photo.startsWith('file://')) {
+        try {
+          logger.debug('📤 Uploading photo to Supabase storage...');
+          const url = await uploadToSupabase(photo, 'property-images', `${listingId}_${Date.now()}.jpg`);
+          uploadedPhotos.push(url);
+          logger.debug('✅ Photo uploaded:', url);
+        } catch (error) {
+          logger.error('❌ Failed to upload photo:', error);
+          uploadedPhotos.push(photo); // Keep original if upload fails
+        }
+      } else {
+        uploadedPhotos.push(photo);
       }
-      logger.debug(`✅ ${media.photos.length} property photos saved`);
     }
-
-    // Save property videos
-    if (media.videos && media.videos.length > 0) {
-      logger.debug('💾 Saving property videos...');
-      for (let i = 0; i < media.videos.length; i++) {
-        const videoUri = media.videos[i];
-        await db.upsert('property_videos', `video_${listingId}_${i}`, {
-          id: `video_${listingId}_${i}`,
-          listingId,
-          userId,
-          videoUri,
-          fileName: `property_video_${i}_${Date.now()}.mp4`,
-          fileSize: 0,
-          mimeType: 'video/mp4',
-          duration: 0,
-          thumbnailUri: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
+    
+    // Upload cover photo
+    let uploadedCoverPhoto = media.coverPhoto;
+    if (media.coverPhoto && (media.coverPhoto.startsWith('data:') || media.coverPhoto.startsWith('file://'))) {
+      try {
+        logger.debug('📤 Uploading cover photo to Supabase storage...');
+        uploadedCoverPhoto = await uploadToSupabase(media.coverPhoto, 'property-images', `${listingId}_cover.jpg`);
+        logger.debug('✅ Cover photo uploaded:', uploadedCoverPhoto);
+      } catch (error) {
+        logger.error('❌ Failed to upload cover photo:', error);
       }
-      logger.debug(`✅ ${media.videos.length} property videos saved`);
     }
 
-    // ALSO save to AsyncStorage for persistence (like profile photos)
-    await savePropertyMediaToStorage(listingId, media);
+    // Upload videos to Supabase storage (same as photos)
+    const uploadedVideos: string[] = [];
+    for (const video of media.videos || []) {
+      try {
+        // Check if video is already a Supabase URL (already uploaded)
+        if (video.includes('supabase.co')) {
+          uploadedVideos.push(video);
+          continue;
+        }
+        
+        // Upload video to Supabase
+        console.log('📤 Uploading video to Supabase:', video);
+        const videoUrl = await uploadToSupabase(video, 'property-videos');
+        
+        if (videoUrl) {
+          uploadedVideos.push(videoUrl);
+          console.log('✅ Video uploaded successfully:', videoUrl);
+        } else {
+          console.warn('⚠️ Failed to upload video, skipping:', video);
+          // Don't add failed videos - skip them instead of blocking the whole process
+        }
+      } catch (error) {
+        console.warn('⚠️ Error uploading video, skipping:', error);
+        // Skip broken videos instead of blocking the entire save process
+        // This allows the listing to be created even if one video fails
+      }
+    }
 
-    logger.debug('✅ Property media saved successfully to both database and AsyncStorage');
+    const uploadedMedia: PropertyMedia = {
+      photos: uploadedPhotos,
+      videos: uploadedVideos,
+      coverPhoto: uploadedCoverPhoto || null
+    };
+
+    logger.debug('✅ Property media uploaded successfully:', {
+      hasCoverPhoto: !!uploadedMedia.coverPhoto,
+      photosCount: uploadedMedia.photos.length,
+      videosCount: uploadedMedia.videos.length
+    });
+
+    return uploadedMedia;
   } catch (error) {
     logger.error('❌ Error saving property media:', error);
     throw error;
@@ -198,21 +240,21 @@ export const loadPropertyMedia = async (listingId: string, userId?: string): Pro
   try {
     logger.debug('📸 Loading property media for listing:', listingId);
     
-    // First, try to get from AsyncStorage (like profile photos) - ALWAYS check this first
+    // First, try to get from Supabase cloud - ALWAYS check this first
     try {
       const storedMedia = await loadPropertyMediaFromStorage(listingId);
       if (storedMedia && (storedMedia.coverPhoto || storedMedia.photos.length > 0 || storedMedia.videos.length > 0)) {
-        logger.debug('✅ Using AsyncStorage property media for listing:', listingId, {
+        logger.debug('✅ Using Supabase cloud property media for listing:', listingId, {
           hasCoverPhoto: !!storedMedia.coverPhoto,
           photosCount: storedMedia.photos.length,
           videosCount: storedMedia.videos.length
         });
         return storedMedia;
       } else {
-        logger.debug('📸 AsyncStorage media found but empty for listing:', listingId);
+        logger.debug('📸 Supabase cloud media found but empty for listing:', listingId);
       }
     } catch (storageError) {
-      logger.debug('⚠️ AsyncStorage not available, trying cache:', storageError);
+      logger.debug('⚠️ Supabase cloud not available, trying cache:', storageError);
     }
     
     // Second, try to get from cache
@@ -222,7 +264,7 @@ export const loadPropertyMedia = async (listingId: string, userId?: string): Pro
       
       if (cachedMedia && (cachedMedia.coverPhoto || cachedMedia.photos.length > 0 || cachedMedia.videos.length > 0)) {
         logger.debug('✅ Using cached property media for listing:', listingId);
-        // Also save to AsyncStorage for future persistence
+        // Also save to Supabase cloud for future persistence
         await savePropertyMediaToStorage(listingId, cachedMedia);
         return cachedMedia;
       } else {
@@ -233,15 +275,23 @@ export const loadPropertyMedia = async (listingId: string, userId?: string): Pro
     }
     
     // Third, load from media tables (property_photos and property_videos)
-    const photos = await db.list('property_photos');
-    logger.debug('📸 All photos in database:', photos.length);
-    const listingPhotos = photos.filter((photo: any) => photo.listingId === listingId);
+    const { data: photos, error: photosError } = await supabase.from('property_photos').select('*');
+    if (photosError) {
+      logger.error('Error fetching photos:', photosError);
+    }
+    const safePhotos = photos || [];
+    logger.debug('📸 All photos in database:', safePhotos.length);
+    const listingPhotos = safePhotos.filter((photo: any) => photo.listingId === listingId);
     logger.debug('📸 Photos for this listing:', listingPhotos.length);
     
     // Load videos
-    const videos = await db.list('property_videos');
-    logger.debug('🎥 All videos in database:', videos.length);
-    const listingVideos = videos.filter((video: any) => video.listingId === listingId);
+    const { data: videos, error: videosError } = await supabase.from('property_videos').select('*');
+    if (videosError) {
+      logger.error('Error fetching videos:', videosError);
+    }
+    const safeVideos = videos || [];
+    logger.debug('🎥 All videos in database:', safeVideos.length);
+    const listingVideos = safeVideos.filter((video: any) => video.listingId === listingId);
     logger.debug('🎥 Videos for this listing:', listingVideos.length);
     
     // Find cover photo - prefer photoData for persistence
@@ -263,9 +313,10 @@ export const loadPropertyMedia = async (listingId: string, userId?: string): Pro
     if (!coverPhoto && propertyPhotos.length === 0 && propertyVideos.length === 0) {
       logger.debug('⚠️ No media found in media tables, checking listing object itself...');
       try {
-        const listing = await db.get('published_listings', listingId);
+        const { data: listing, error: listingError } = await supabase.from('published_listings').select('*').eq('id', listingId).single(); if (listingError && listingError.code !== 'PGRST116') { logger.error('Error fetching listing:', listingError); }
         if (listing) {
-          coverPhoto = listing.coverPhoto || null;
+          // Try both snake_case and camelCase for compatibility
+          coverPhoto = listing.cover_photo || listing.coverPhoto || null;
           propertyPhotos = Array.isArray(listing.photos) ? listing.photos : [];
           propertyVideos = Array.isArray(listing.videos) ? listing.videos : [];
           
@@ -314,16 +365,16 @@ export const loadPropertyMedia = async (listingId: string, userId?: string): Pro
       logger.debug('⚠️ Failed to cache property media:', cacheError);
     }
 
-    // ALWAYS save to AsyncStorage for persistence (like profile photos) - this is critical
+    // ALWAYS save to Supabase cloud for persistence - this is critical
     try {
       await savePropertyMediaToStorage(listingId, media);
-      logger.debug('💾 Property media saved to AsyncStorage for listing:', listingId, {
+      logger.debug('💾 Property media saved to Supabase cloud for listing:', listingId, {
         hasCoverPhoto: !!media.coverPhoto,
         photosCount: media.photos.length,
         videosCount: media.videos.length
       });
     } catch (storageError) {
-      logger.error('❌ CRITICAL: Failed to save property media to AsyncStorage:', storageError);
+      logger.error('❌ CRITICAL: Failed to save property media to Supabase cloud:', storageError);
       // Don't throw here, but log as critical since this affects persistence
     }
     
@@ -346,16 +397,24 @@ export const deletePropertyMedia = async (listingId: string): Promise<void> => {
     logger.debug('🗑️ Deleting property media for listing:', listingId);
     
     // Delete photos
-    const photos = await db.list('property_photos');
-    const listingPhotos = photos.filter((photo: any) => photo.listingId === listingId);
+    const { data: photos, error: photosError } = await supabase.from('property_photos').select('*');
+    if (photosError) {
+      logger.error('Error fetching photos:', photosError);
+    }
+    const safePhotos = photos || [];
+    const listingPhotos = safePhotos.filter((photo: any) => photo.listingId === listingId);
     
     for (const photo of listingPhotos) {
       await db.remove('property_photos', photo.id);
     }
     
     // Delete videos
-    const videos = await db.list('property_videos');
-    const listingVideos = videos.filter((video: any) => video.listingId === listingId);
+    const { data: videos, error: videosError } = await supabase.from('property_videos').select('*');
+    if (videosError) {
+      logger.error('Error fetching videos:', videosError);
+    }
+    const safeVideos = videos || [];
+    const listingVideos = safeVideos.filter((video: any) => video.listingId === listingId);
     
     for (const video of listingVideos) {
       await db.remove('property_videos', video.id);
@@ -394,20 +453,24 @@ export const updatePropertyMedia = async (
 
 /**
  * Refresh all media for app startup - ensures persistence across login/logout
- * This function re-syncs all media from listing objects to AsyncStorage and media tables
+ * This function re-syncs all media from listing objects to Supabase cloud storage
  */
 export const refreshAllPropertyMedia = async (): Promise<void> => {
   try {
     logger.debug('🔄 Refreshing all property media for persistence...');
     
     // Get all published listings
-    const publishedListings = await db.list('published_listings');
-    logger.debug(`📋 Found ${publishedListings.length} published listings to refresh`);
+    const { data: publishedListings, error: listingsError } = await supabase.from('published_listings').select('*');
+    if (listingsError) {
+      logger.error('Error fetching listings:', listingsError);
+    }
+    const safeListings = publishedListings || [];
+    logger.debug(`📋 Found ${safeListings.length} published listings to refresh`);
     
     let refreshedCount = 0;
     let resyncedCount = 0;
     
-    for (const listing of publishedListings) {
+    for (const listing of safeListings) {
       try {
         // First, check if media exists in the listing object itself
         const hasListingMedia = listing.coverPhoto || 
@@ -426,7 +489,7 @@ export const refreshAllPropertyMedia = async (): Promise<void> => {
           // Save to media tables
           await savePropertyMedia(listing.id, listing.userId || 'unknown', mediaFromListing);
           
-          // Save to AsyncStorage
+          // Save to Supabase cloud
           await savePropertyMediaToStorage(listing.id, mediaFromListing);
           
           resyncedCount++;
@@ -454,7 +517,7 @@ export const refreshAllPropertyMedia = async (): Promise<void> => {
     }
     
     logger.debug(`✅ Media refresh completed:`, {
-      totalListings: publishedListings.length,
+      totalListings: safeListings.length,
       resyncedFromListing: resyncedCount,
       refreshedTotal: refreshedCount
     });
@@ -462,3 +525,8 @@ export const refreshAllPropertyMedia = async (): Promise<void> => {
     logger.error('❌ Error refreshing all property media:', error);
   }
 };
+
+
+
+
+

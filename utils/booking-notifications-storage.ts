@@ -1,53 +1,33 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from './supabase-client';
+import { db } from './db';
 import { Platform } from 'react-native';
 
-// Web-compatible storage functions
-const getStorage = () => {
-  if (Platform.OS === 'web') {
-    return {
-      getItem: (key: string) => {
-        if (typeof window !== 'undefined') {
-          return Promise.resolve(window.localStorage.getItem(key));
-        }
-        return Promise.resolve(null);
-      },
-      setItem: (key: string, value: string) => {
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem(key, value);
-        }
-        return Promise.resolve();
-      },
-      removeItem: (key: string) => {
-        if (typeof window !== 'undefined') {
-          window.localStorage.removeItem(key);
-        }
-        return Promise.resolve();
-      },
-    };
-  }
-  return AsyncStorage;
-};
-
-const STORAGE_KEY_PREFIX = 'booking_notifications_shown_';
-
 /**
- * Get the storage key for a specific user's shown notifications
+ * Cloud-based notification storage using Supabase
  */
-const getStorageKey = (userId: string): string => {
-  return `${STORAGE_KEY_PREFIX}${userId}`;
-};
+const NOTIFICATION_TABLE = 'user_notification_states';
 
 /**
- * Load shown booking notifications for a user from persistent storage
+ * Load shown booking notifications for a user from Supabase cloud
  */
 export async function loadShownBookingNotifications(userId: string): Promise<Set<string>> {
   try {
-    const storage = getStorage();
-    const key = getStorageKey(userId);
-    const data = await storage.getItem(key);
+    console.log(`☁️ Loading shown booking notifications from cloud for user ${userId}`);
     
-    if (data) {
-      const notifications = JSON.parse(data) as string[];
+    const { data, error } = await supabase
+      .from(NOTIFICATION_TABLE)
+      .select('notification_data')
+      .eq('user_id', userId)
+      .eq('notification_type', 'booking')
+      .single();
+    
+    if (error && error.code !== 'PGRST116') {
+      console.error('❌ Error loading notifications from cloud:', error);
+      return new Set();
+    }
+    
+    if (data && data.notification_data) {
+      const notifications = data.notification_data as string[];
       console.log(`📥 Loaded ${notifications.length} shown booking notifications for user ${userId}`);
       return new Set(notifications);
     }
@@ -61,18 +41,34 @@ export async function loadShownBookingNotifications(userId: string): Promise<Set
 }
 
 /**
- * Save shown booking notifications for a user to persistent storage
+ * Save shown booking notifications for a user to Supabase cloud
  */
 export async function saveShownBookingNotifications(
   userId: string,
   notifications: Set<string>
 ): Promise<void> {
   try {
-    const storage = getStorage();
-    const key = getStorageKey(userId);
+    console.log(`☁️ Saving ${notifications.size} shown booking notifications to cloud for user ${userId}`);
+    
     const notificationsArray = Array.from(notifications);
-    await storage.setItem(key, JSON.stringify(notificationsArray));
-    console.log(`💾 Saved ${notificationsArray.length} shown booking notifications for user ${userId}`);
+    
+    const { error } = await supabase
+      .from(NOTIFICATION_TABLE)
+      .upsert({
+        user_id: userId,
+        notification_type: 'booking',
+        notification_data: notificationsArray,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'user_id,notification_type'
+      });
+    
+    if (error) {
+      console.error('❌ Error saving notifications to cloud:', error);
+      return;
+    }
+    
+    console.log(`💾 Saved ${notificationsArray.length} shown booking notifications to cloud for user ${userId}`);
   } catch (error) {
     console.error('❌ Error saving shown booking notifications:', error);
   }

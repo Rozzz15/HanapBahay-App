@@ -80,8 +80,52 @@ export const notifications = {
   loginSuccess: () => 'Welcome back! You\'ve successfully signed in. Ready to find your perfect home? 🏠',
 
   loginError: () => createNotification({
-    title: 'Login Failed ❌',
+    title: 'Login Failed',
     description: 'Invalid email or password. Please check your credentials and try again.',
+    type: 'error',
+    duration: 5000,
+  }),
+
+  invalidPassword: (remainingAttempts: number) => createNotification({
+    title: 'Incorrect Password',
+    description: remainingAttempts > 0 
+      ? `The password you entered is incorrect. ${remainingAttempts} attempt${remainingAttempts > 1 ? 's' : ''} remaining before account lock.`
+      : 'The password you entered is incorrect.',
+    type: 'warning',
+    duration: 5000,
+  }),
+
+  accountNotFound: () => createNotification({
+    title: 'Account Not Found',
+    description: 'No account exists with this email address. Please check your email or create a new account.',
+    type: 'error',
+    duration: 5000,
+  }),
+
+  accountLocked: (seconds: number) => createNotification({
+    title: 'Account Temporarily Locked',
+    description: `Too many failed login attempts. Please wait ${seconds} second${seconds !== 1 ? 's' : ''} before trying again.`,
+    type: 'error',
+    duration: 6000,
+  }),
+
+  loginAttemptBlocked: (seconds: number) => createNotification({
+    title: 'Please Wait',
+    description: `Your account is temporarily locked. Please wait ${seconds} more second${seconds !== 1 ? 's' : ''} before trying again.`,
+    type: 'warning',
+    duration: 5000,
+  }),
+
+  emailNotConfirmed: () => createNotification({
+    title: 'Email Not Verified',
+    description: 'Please check your email and verify your account before logging in. Check your spam folder if you don\'t see the email.',
+    type: 'warning',
+    duration: 6000,
+  }),
+
+  wrongCredentials: () => createNotification({
+    title: 'Invalid Credentials',
+    description: 'The email or password you entered is incorrect. Please check and try again.',
     type: 'error',
     duration: 5000,
   }),

@@ -1,107 +1,138 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+/**
+ * Cloud-based Auth User Utility
+ * This is a drop-in replacement for auth-user.ts that uses Supabase instead of AsyncStorage
+ */
+
+import { 
+  storeCloudAuthUser, 
+  getCloudAuthUser, 
+  clearCloudAuthSession,
+  CloudAuthUser 
+} from './cloud-storage';
+import { supabase } from './supabase-client';
 
 export interface AuthUser {
-    id: string;
-    roles: string[];
-    permissions: string[];
-    name?: string;
-    email?: string;
+  id: string;
+  roles: string[];
+  permissions: string[];
+  name?: string;
+  email?: string;
 }
 
-const AUTH_USER_KEY = 'auth_user';
-
-// Cache for auth user to reduce storage calls
+// Cache for auth user to reduce database calls
 let authUserCache: AuthUser | null = null;
 
-// Web-compatible storage functions
-const getStorage = () => {
-    if (Platform.OS === 'web') {
-        return {
-            getItem: (key: string) => Promise.resolve(window.localStorage.getItem(key)),
-            setItem: (key: string, value: string) => Promise.resolve(window.localStorage.setItem(key, value)),
-            removeItem: (key: string) => Promise.resolve(window.localStorage.removeItem(key))
-        };
-    }
-    return AsyncStorage;
-};
-
+/**
+ * Store auth user in Supabase (replaces AsyncStorage)
+ */
 export async function storeAuthUser(user: AuthUser): Promise<void> {
-    try {
-        const storage = getStorage();
-        await storage.setItem(AUTH_USER_KEY, JSON.stringify(user));
-        
-        // Update cache immediately
-        authUserCache = user;
-        
-        console.log('✅ Auth user stored successfully');
-    } catch (error) {
-        console.error('❌ Error storing auth user:', error);
-    }
+  try {
+    await storeCloudAuthUser(user);
+    
+    // Update cache immediately
+    authUserCache = user;
+    
+    console.log('✅ Auth user stored successfully in cloud');
+  } catch (error) {
+    console.error('❌ Error storing auth user in cloud:', error);
+    throw error;
+  }
 }
 
+/**
+ * Get auth user from Supabase (replaces AsyncStorage)
+ */
 export async function getAuthUser(): Promise<AuthUser | null> {
-    try {
-        // Return cached value if available
-        if (authUserCache) {
-            console.log('📖 Retrieved auth user from cache: User found');
-            return authUserCache;
-        }
-        
-        const storage = getStorage();
-        const jsonValue = await storage.getItem(AUTH_USER_KEY);
-        const result = jsonValue != null ? JSON.parse(jsonValue) : null;
-        
-        // Update cache
-        authUserCache = result;
-        
-        console.log('📖 Retrieved auth user:', result ? 'User found' : 'No user');
-        return result;
-    } catch (error) {
-        console.error('❌ Error getting auth user:', error);
-        return null;
+  try {
+    // Return cached value if available
+    if (authUserCache) {
+      console.log('📖 Retrieved auth user from cache: User found');
+      return authUserCache;
     }
+    
+    const result = await getCloudAuthUser();
+    
+    // Update cache
+    authUserCache = result;
+    
+    console.log('📖 Retrieved auth user from cloud:', result ? 'User found' : 'No user');
+    return result;
+  } catch (error) {
+    console.error('❌ Error getting auth user from cloud:', error);
+    return null;
+  }
 }
 
+/**
+ * Clear auth session from Supabase (replaces AsyncStorage)
+ */
 export async function clearAuthSession(): Promise<void> {
-    try {
-        const storage = getStorage();
-        
-        // Clear cache first
-        authUserCache = null;
-        
-        // Only clear the main auth user session
-        await storage.removeItem(AUTH_USER_KEY);
-        console.log('🗑️ Auth session cleared');
-        
-        // For web, only clear specific session-related keys, not all user data
-        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.localStorage) {
-            const sessionKeysToRemove = [
-                'auth_user',
-                'supabase-auth-token',
-                'supabase.auth.token',
-                'sb-localhost-auth-token',
-                'sb-localhost-auth-token.0',
-                'sb-localhost-auth-token.1'
-            ];
-            
-            sessionKeysToRemove.forEach(key => {
-                if (window.localStorage.getItem(key)) {
-                    window.localStorage.removeItem(key);
-                    console.log(`🗑️ Cleared session key: ${key}`);
-                }
-            });
-            
-            console.log(`✅ Cleared ${sessionKeysToRemove.length} session keys`);
-        }
-        
-        console.log('✅ Auth session cleared successfully (user data preserved)');
-    } catch (error) {
-        console.error('❌ Error clearing auth session:', error);
-    }
+  try {
+    // Clear cache first
+    authUserCache = null;
+    
+    await clearCloudAuthSession();
+    
+    console.log('✅ Auth session cleared successfully from cloud');
+  } catch (error) {
+    console.error('❌ Error clearing auth session from cloud:', error);
+    throw error;
+  }
 }
 
+/**
+ * Clear auth user from cache and Supabase
+ */
 export async function clearAuthUser(): Promise<void> {
-    const storage = getStorage();
-    await storage.removeItem(AUTH_USER_KEY);
-} 
+  try {
+    // Clear cache
+    authUserCache = null;
+    
+    // Clear from cloud
+    await clearCloudAuthSession();
+    
+    console.log('✅ Auth user cleared successfully');
+  } catch (error) {
+    console.error('❌ Error clearing auth user:', error);
+    throw error;
+  }
+}
+
+/**
+ * Refresh auth user from Supabase (bypasses cache)
+ */
+export async function refreshAuthUser(): Promise<AuthUser | null> {
+  try {
+    authUserCache = null; // Clear cache
+    return await getAuthUser();
+  } catch (error) {
+    console.error('❌ Error refreshing auth user:', error);
+    return null;
+  }
+}
+
+/**
+ * Check if user is authenticated
+ */
+export async function isAuthenticated(): Promise<boolean> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session !== null;
+  } catch (error) {
+    console.error('❌ Error checking authentication:', error);
+    return false;
+  }
+}
+
+/**
+ * Get current user ID from Supabase session
+ */
+export async function getCurrentUserId(): Promise<string | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.user?.id || null;
+  } catch (error) {
+    console.error('❌ Error getting current user ID:', error);
+    return null;
+  }
+}

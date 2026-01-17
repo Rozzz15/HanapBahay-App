@@ -35,14 +35,15 @@ export async function createOrFindConversation(data: CreateConversationData): Pr
       
       const isMatchingConversation = (tenantMatch && ownerMatch) || participantMatch;
       
-      // If propertyId is provided, optionally match by property as well
-      if (isMatchingConversation && propertyId) {
+      // CRITICAL: If propertyId is provided, MUST match exact property
+      // This ensures separate conversations for each property
+      if (propertyId) {
         const convPropertyId = conv.propertyId || conv.property_id;
-        // If both have propertyId, they should match
-        // If one doesn't have propertyId, still match (for backward compatibility)
-        return convPropertyId === undefined || convPropertyId === propertyId || convPropertyId === '';
+        // Both tenant+owner AND propertyId must match
+        return isMatchingConversation && convPropertyId === propertyId;
       }
       
+      // If no propertyId provided (legacy), match by tenant+owner only
       return isMatchingConversation;
     });
 

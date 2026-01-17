@@ -9,6 +9,19 @@ echo ""
 echo "1️⃣ Checking .env configuration..."
 node scripts/ensure-cloud-backend.js
 
+# Step 1b: Verify constants file has cloud backend as default
+echo ""
+echo "1️⃣ Verifying constants file..."
+if [ -f "constants/index.ts" ]; then
+    if grep -q "https://web-production-e66fb.up.railway.app" "constants/index.ts"; then
+        echo "   ✅ Constants file has cloud backend URL"
+    else
+        echo "   ⚠️  WARNING: Constants file may not have cloud backend URL!"
+    fi
+else
+    echo "   ⚠️  WARNING: Constants file not found!"
+fi
+
 # Step 2: Build the APK
 echo ""
 echo "2️⃣ Building release APK..."
@@ -58,4 +71,5 @@ else
     echo "   ❌ Could not find release APK"
     exit 1
 fi
+
 

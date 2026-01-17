@@ -1,7 +1,6 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { useEffect, useRef } from 'react';
-import { useRouter } from 'expo-router';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import BrgyBottomNav from '../../components/BrgyBottomNav';
@@ -43,7 +42,7 @@ export default function BrgyLayout() {
     };
 
     checkBrgyAccess();
-  }, [user?.id, isLoading, router]);
+  }, [user, isLoading, router]);
 
   if (isLoading) {
     return (

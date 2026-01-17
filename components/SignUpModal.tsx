@@ -11,7 +11,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OwnerApplicationDocument } from '@/types';
 
 interface SignUpModalProps {
@@ -129,17 +128,18 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             quality: 0.8,
-            allowsMultipleSelection: false,
+            allowsMultipleSelection: true,
         });
         if (!result.canceled && result.assets?.length) {
-            const newDocument: OwnerApplicationDocument = {
-                id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            // Process all selected images
+            const newDocuments: OwnerApplicationDocument[] = result.assets.map((asset, index) => ({
+                id: `doc_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`,
                 name: documentName,
-                uri: result.assets[0].uri,
+                uri: asset.uri,
                 uploadedAt: new Date().toISOString(),
-            };
-            // Allow multiple documents - add the new document to the list
-            setOwnerDocuments(prev => [...prev, newDocument]);
+            }));
+            // Add all selected documents to the list
+            setOwnerDocuments(prev => [...prev, ...newDocuments]);
             setShowDocumentTypeModal(false);
         }
     };
@@ -289,12 +289,32 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
 
         setIsSubmitting(true);
         try {
-            // Owner flow: Save documents for verification
+            // Owner flow: Upload documents to Supabase Storage first (before creating account)
+            let uploadedDocuments: any[] = [];
             if (selectedRole === 'owner' && ownerDocuments.length > 0) {
-                console.log('💾 Saving owner verification documents:', ownerDocuments);
-                const ownerVerification = { documents: ownerDocuments };
-                await AsyncStorage.setItem('owner_verification', JSON.stringify(ownerVerification));
-                console.log('✅ Owner verification documents saved');
+                console.log('📤 Uploading owner verification documents to Supabase Storage...');
+                try {
+                    const { uploadOwnerDocuments } = await import('@/utils/supabase-storage');
+                    
+                    // We'll upload with a temporary ID first, then update with real userId after signup
+                    const tempUserId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+                    
+                    // Upload documents to Supabase Storage
+                    uploadedDocuments = await uploadOwnerDocuments(
+                        ownerDocuments.map(doc => ({ uri: doc.uri, name: doc.name })),
+                        tempUserId
+                    );
+                    
+                    console.log(`✅ ${uploadedDocuments.length} documents uploaded to Supabase Storage`);
+                } catch (uploadError) {
+                    console.error('❌ Failed to upload documents:', uploadError);
+                    setIsSubmitting(false);
+                    showSimpleAlert(
+                        'Upload Failed',
+                        'Failed to upload documents. Please check your internet connection and try again.'
+                    );
+                    return;
+                }
             }
 
             const signUpData = {
@@ -311,6 +331,8 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                 houseNumber: selectedRole === 'owner' ? ownerAddress.houseNumber.trim() : undefined,
                 street: selectedRole === 'owner' ? ownerAddress.street.trim() : undefined,
                 barangay: selectedRole === 'owner' ? (ownerAddress.barangay === 'RIZAL' || ownerAddress.barangay === 'TALOLONG' || ownerAddress.barangay === 'GOMEZ' || ownerAddress.barangay === 'MAGSAYSAY' || ownerAddress.barangay === 'BURGOS' ? ownerAddress.barangay : undefined) : undefined,
+                // Pass uploaded documents (with Supabase Storage URLs)
+                documents: selectedRole === 'owner' && uploadedDocuments.length > 0 ? uploadedDocuments : undefined,
             };
 
             const result = await signUpUser(signUpData);
@@ -327,41 +349,28 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                 const userId = (result as any).user?.id || (result as any).id;
                 const isOwner = Array.isArray(roles) && roles.includes('owner');
                 
-                // Show appropriate toast message based on role
-                if (isOwner) {
-                    toast.show('Owner account created! Your application is pending approval from your Barangay. 🎉');
-                } else {
-                    toast.show('Account Created! Welcome to HanapBahay! Your account has been created successfully. 🎉');
+                // Close the modal first
+                onClose();
+                if (onSignUpSuccess) {
+                    onSignUpSuccess();
                 }
                 
-                // Redirect after a short delay
-                setTimeout(async () => {
-                    if (isOwner) {
-                        let ownerId = userId;
-                        
-                        try {
-                            const { getAuthUser } = await import('@/utils/auth-user');
-                            const authUser = await getAuthUser();
-                            if (authUser?.id) {
-                                ownerId = authUser.id;
-                            }
-                        } catch (authError) {
-                            console.warn('⚠️ Could not get userId from auth context:', authError);
-                        }
-                        
-                        if (ownerId) {
-                            redirectOwnerBasedOnListings(ownerId);
-                        }
-                    } else {
-                        // Pass userId to redirectTenantToTabs to ensure it has the user ID even if state hasn't updated
+                // Show appropriate alert message based on role
+                if (isOwner) {
+                    // For owners: Show alert and stay on login screen
+                    showSimpleAlert(
+                        'Account Created Successfully! 🎉',
+                        'Your owner account has been created and your application has been submitted to your Barangay for approval.\n\nYou will receive a notification once your application is approved. Please log in after approval to access your owner dashboard.'
+                    );
+                    // DO NOT redirect - keep them on login screen
+                } else {
+                    // For tenants: Show success message and redirect
+                    toast.show('Account Created! Welcome to HanapBahay! 🎉');
+                    // Small delay before redirect
+                    setTimeout(() => {
                         redirectTenantToTabs(userId);
-                    }
-                    
-                    onClose();
-                    if (onSignUpSuccess) {
-                        onSignUpSuccess();
-                    }
-                }, 500);
+                    }, 500);
+                }
             } else {
                 setIsSubmitting(false);
                 showSimpleAlert(
@@ -974,7 +983,7 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                                 </Text>
 
                                 <Text style={styles.termsModalBodyText}>
-                                    Welcome to HANAPBAHAY, a mobile and web application designed to help users find available houses, apartments, and rooms for rent. By accessing or using the HANAPBAHAY App ("the App"), you agree to be bound by these Terms and Conditions. Please read them carefully before using our services.
+                                    Welcome to HANAPBAHAY, a mobile and web application designed to help users find available houses, apartments, and rooms for rent. By accessing or using the HANAPBAHAY App (&quot;the App&quot;), you agree to be bound by these Terms and Conditions. Please read them carefully before using our services.
                                 </Text>
 
                                 <View style={styles.termsModalSection}>
@@ -1043,7 +1052,7 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                                             • HANAPBAHAY does not store or have access to your payment card details.
                                         </Text>
                                         <Text style={styles.termsModalBodyText}>
-                                            • Refunds or cancellations depend on the property owner's policies.
+                                            • Refunds or cancellations depend on the property owner&apos;s policies.
                                         </Text>
                                     </View>
 
@@ -1072,7 +1081,7 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                                     <View style={styles.termsModalSubsection}>
                                         <Text style={styles.termsModalSubtitle}>8. Limitation of Liability</Text>
                                         <Text style={styles.termsModalBodyText}>
-                                            HANAPBAHAY provides the platform "as is" without warranties of any kind.
+                                            HANAPBAHAY provides the platform &quot;as is&quot; without warranties of any kind.
                                         </Text>
                                         <Text style={styles.termsModalBodyText}>
                                             We are not responsible for:
@@ -1211,7 +1220,7 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                                             • Service providers who help us operate the App (hosting, analytics, payment processing)
                                         </Text>
                                         <Text style={styles.termsModalBodyText}>
-                                            • Law enforcement, if required by law or to protect users' safety
+                                            • Law enforcement, if required by law or to protect users&apos; safety
                                         </Text>
                                     </View>
 
@@ -1253,7 +1262,7 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                                     </View>
 
                                     <View style={styles.termsModalSubsection}>
-                                        <Text style={styles.termsModalSubtitle}>7. Children's Privacy</Text>
+                                        <Text style={styles.termsModalSubtitle}>7. Children&apos;s Privacy</Text>
                                         <Text style={styles.termsModalBodyText}>
                                             HANAPBAHAY is not designed for users under 18 years old. We do not knowingly collect information from minors.
                                         </Text>

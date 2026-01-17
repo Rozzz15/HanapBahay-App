@@ -259,12 +259,12 @@ export default function ApprovedOwners() {
             
             // Read the file as base64
             const base64 = await FileSystem.readAsStringAsync(sourceUri, {
-              encoding: FileSystem.EncodingType.Base64,
+              encoding: 'base64',
             });
             
             // Write to temporary location
             await FileSystem.writeAsStringAsync(tempFileUri, base64, {
-              encoding: FileSystem.EncodingType.Base64,
+              encoding: 'base64',
             });
             
             console.log('✅ File copied successfully');
@@ -284,8 +284,6 @@ export default function ApprovedOwners() {
           
           // Save file directly to device storage
           try {
-            const isImage = ['jpg', 'jpeg', 'png', 'gif'].includes(extension.toLowerCase());
-            
             // For all files, use document directory and sharing (more reliable across platforms)
             await saveToDocumentDirectory(resultUri, fileName, extension);
           } catch (error) {
@@ -308,10 +306,10 @@ export default function ApprovedOwners() {
                     const docFileUri = FileSystem.documentDirectory + fileName;
                     if (sourceUri !== docFileUri) {
                       const base64 = await FileSystem.readAsStringAsync(sourceUri, {
-                        encoding: FileSystem.EncodingType.Base64,
+                        encoding: 'base64',
                       });
                       await FileSystem.writeAsStringAsync(docFileUri, base64, {
-                        encoding: FileSystem.EncodingType.Base64,
+                        encoding: 'base64',
                       });
                     }
                     
@@ -335,10 +333,10 @@ export default function ApprovedOwners() {
               // Copy file to document directory
               if (sourceUri !== docFileUri) {
                 const base64 = await FileSystem.readAsStringAsync(sourceUri, {
-                  encoding: FileSystem.EncodingType.Base64,
+                  encoding: 'base64',
                 });
                 await FileSystem.writeAsStringAsync(docFileUri, base64, {
-                  encoding: FileSystem.EncodingType.Base64,
+                  encoding: 'base64',
                 });
               }
               
@@ -355,7 +353,7 @@ export default function ApprovedOwners() {
                 } else {
                   Alert.alert('Success', `File saved to app storage: ${docFileUri}`);
                 }
-              } catch (sharingError) {
+              } catch {
                 Alert.alert('Success', `File saved to app storage: ${docFileUri}`);
               }
             } catch (error) {
@@ -796,7 +794,7 @@ export default function ApprovedOwners() {
                                 } else {
                                   try {
                                     await Linking.openURL(`tel:${cleanPhone}`);
-                                  } catch (fallbackError) {
+                                  } catch {
                                     Alert.alert('Error', `Unable to open phone dialer. Please copy the number and dial manually.`);
                                   }
                                 }
@@ -807,7 +805,7 @@ export default function ApprovedOwners() {
                             try {
                               const cleanPhone = selectedOwner.phone.replace(/[\s\-()]/g, '');
                               await Linking.openURL(`tel:${cleanPhone}`);
-                            } catch (fallbackError) {
+                            } catch {
                               Alert.alert('Error', `Unable to open phone dialer. Please copy the number and dial manually.`);
                             }
                           }
@@ -1122,30 +1120,8 @@ const ZoomableImage = ({ uri, onClose }: { uri: string; onClose: () => void }) =
       savedTranslateX.value = 0;
       savedTranslateY.value = 0;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const resetZoom = () => {
-    if (isClosing || !isMounted.value) return;
-    try {
-      cancelAnimation(scale);
-      cancelAnimation(translateX);
-      cancelAnimation(translateY);
-      savedScale.value = 1;
-      savedTranslateX.value = 0;
-      savedTranslateY.value = 0;
-      scale.value = withTiming(1, { duration: 200 });
-      translateX.value = withTiming(0, { duration: 200 });
-      translateY.value = withTiming(0, { duration: 200 });
-    } catch (error) {
-      console.error('Error resetting zoom:', error);
-      scale.value = 1;
-      translateX.value = 0;
-      translateY.value = 0;
-      savedScale.value = 1;
-      savedTranslateX.value = 0;
-      savedTranslateY.value = 0;
-    }
-  };
 
   const handleClose = () => {
     if (isClosing) return;

@@ -50,8 +50,10 @@ export async function initializeDatabase(): Promise<DatabaseInitResult> {
       }
     }
     
-    // Create default barangay officials if they don't exist
-    const defaultDataCreated = await createDefaultBarangayOfficials();
+    // Note: Barangay officials should be created using the setup script
+    // Run: npx tsx scripts/create-brgy-officials.ts
+    console.log('ℹ️  To create barangay officials, run: npx tsx scripts/create-brgy-officials.ts');
+    const defaultDataCreated = false;
     
     console.log('✅ Database initialization completed');
     
@@ -125,64 +127,12 @@ export async function createBarangayOfficial(barangay: string): Promise<{ succes
 }
 
 /**
- * Create default barangay officials for testing
+ * NOTE: This function is deprecated
+ * Use the setup script instead: npx tsx scripts/create-brgy-officials.ts
  */
 async function createDefaultBarangayOfficials(): Promise<boolean> {
-  try {
-    console.log('👥 Creating default barangay officials...');
-    
-    const existingUsers = await db.list<DbUserRecord>('users');
-    const existingBarangayOfficials = existingUsers.filter(user => user.role === 'brgy_official');
-    
-    const barangays = ['RIZAL', 'TALOLONG', 'GOMEZ', 'MAGSAYSAY', 'BURGOS'];
-    const now = new Date().toISOString();
-    
-    // Check which barangays already have officials
-    const existingBarangays = new Set(
-      existingBarangayOfficials
-        .map(official => official.barangay?.toUpperCase())
-        .filter((b): b is string => !!b)
-    );
-    
-    // Create officials only for missing barangays
-    let createdCount = 0;
-    for (const barangay of barangays) {
-      if (existingBarangays.has(barangay)) {
-        console.log(`✅ Barangay official for ${barangay} already exists`);
-        continue;
-      }
-      
-      const officialId = generateId('brgy');
-      const official: DbUserRecord = {
-        id: officialId,
-        email: `brgy.${barangay.toLowerCase()}@hanapbahay.com`,
-        name: `Barangay ${barangay} Official`,
-        phone: '+63 910 000 0000',
-        address: `${barangay} Street, Lopez, Quezon`,
-        role: 'brgy_official',
-        roles: ['brgy_official'],
-        barangay: barangay,
-        createdAt: now,
-        updatedAt: now
-      };
-      
-      await db.upsert('users', officialId, official);
-      console.log(`✅ Created barangay official for ${barangay}`);
-      createdCount++;
-    }
-    
-    if (createdCount > 0) {
-      console.log(`✅ Created ${createdCount} new barangay official(s)`);
-    } else {
-      console.log(`✅ All barangay officials already exist: ${existingBarangayOfficials.length}`);
-    }
-    
-    return true;
-    
-  } catch (error) {
-    console.error('❌ Failed to create default barangay officials:', error);
-    return false;
-  }
+  console.log('ℹ️  Barangay officials should be created using: npx tsx scripts/create-brgy-officials.ts');
+  return false;
 }
 
 /**

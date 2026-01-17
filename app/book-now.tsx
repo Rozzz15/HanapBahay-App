@@ -761,7 +761,7 @@ export default function BookNowScreen() {
         specialRequests: specialRequests || 'Standard booking request',
         selectedRoom: propertyData.roomCapacities && propertyData.roomCapacities.length > 0 ? selectedRoom : undefined,
         tenantType: tenantType,
-        numberOfPeople: (tenantType === 'family' || tenantType === 'group') && numberOfPeople ? parseInt(numberOfPeople, 10) : undefined
+        numberOfPeople: numberOfPeople ? parseInt(numberOfPeople, 10) : (tenantType === 'individual' ? 1 : tenantType === 'couple' ? 2 : undefined)
       };
 
       console.log('🔄 Creating booking with data:', bookingData);
@@ -878,7 +878,7 @@ export default function BookNowScreen() {
             return (
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Select Room</Text>
-                <Text style={styles.inputHint}>Choose which room you'd like to book</Text>
+                <Text style={styles.inputHint}>Choose which room you&apos;d like to book</Text>
                 
                 {allRoomsOccupied ? (
                   <View style={styles.noRoomsAvailableContainer}>
@@ -981,8 +981,13 @@ export default function BookNowScreen() {
                   ]}
                   onPress={() => {
                     setTenantType(type);
-                    // Clear number of people if switching away from family/group
-                    if (type !== 'family' && type !== 'group') {
+                    // Auto-set number of people based on type
+                    if (type === 'individual') {
+                      setNumberOfPeople('1');
+                    } else if (type === 'couple') {
+                      setNumberOfPeople('2');
+                    } else {
+                      // Clear for family/group so user can enter custom number
                       setNumberOfPeople('');
                     }
                   }}
@@ -1004,6 +1009,21 @@ export default function BookNowScreen() {
             })}
           </View>
         </View>
+
+        {/* Number of People - Auto-filled for Individual and Couple */}
+        {(tenantType === 'individual' || tenantType === 'couple') && (
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Number of People</Text>
+            <View style={styles.autoFilledBox}>
+              <Text style={styles.autoFilledText}>
+                {tenantType === 'individual' ? '1 person' : '2 people'}
+              </Text>
+              <Text style={styles.autoFilledSubtext}>
+                (Automatically set based on tenant type)
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* Number of People Input - Only show for Family and Group/Shared */}
         {(tenantType === 'family' || tenantType === 'group') && (
@@ -1054,7 +1074,7 @@ export default function BookNowScreen() {
           <Text style={styles.costTitle}>Payment Summary</Text>
           
           <View style={styles.costItem}>
-            <Text style={styles.costLabel}>First Month's Rent</Text>
+            <Text style={styles.costLabel}>First Month&apos;s Rent</Text>
             <Text style={styles.costValue}>₱{(propertyData.monthlyRent || 0).toLocaleString()}</Text>
           </View>
           
@@ -1089,8 +1109,8 @@ export default function BookNowScreen() {
             • Your booking request will be sent to the property owner for review{'\n'}
             • The owner has 48 hours to respond to your request{'\n'}
             • Monthly payment will be required upon approval{'\n'}
-            • You can cancel your request before it's approved{'\n'}
-            • All bookings are subject to the property's terms and conditions
+            • You can cancel your request before it&apos;s approved{'\n'}
+            • All bookings are subject to the property&apos;s terms and conditions
           </Text>
           </View>
       </ScrollView>
@@ -1872,5 +1892,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#111827',
     marginTop: 8,
+  },
+  autoFilledBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    marginTop: 8,
+  },
+  autoFilledText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E40AF',
+  },
+  autoFilledSubtext: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
   },
 });

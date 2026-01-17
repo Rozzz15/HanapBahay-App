@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { mockSignIn } from '../../utils/mock-auth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../../utils/supabase-client';
 
 // Define the user type structure to match mock-auth.ts
 interface MockUser {
@@ -27,20 +26,24 @@ export type ForgotPasswordData = z.infer<typeof forgotPasswordSchema>;
 // Mock user database key
 const MOCK_USERS_KEY = 'mock_users_database';
 
-// Function to check if email exists in the mock database
+// Function to check if email exists in Supabase
 const checkEmailExists = async (email: string): Promise<boolean> => {
     try {
         const normalizedEmail = email.trim().toLowerCase();
-        const storedUsers = await AsyncStorage.getItem(MOCK_USERS_KEY);
         
-        if (!storedUsers) {
+        // Check in Supabase users table
+        const { data, error } = await supabase
+            .from('users')
+            .select('id, email')
+            .eq('email', normalizedEmail)
+            .single();
+        
+        if (error) {
+            console.log('Email not found in users table:', normalizedEmail);
             return false;
         }
         
-        const usersData = JSON.parse(storedUsers);
-        const mockUsers = new Map<string, MockUser>(Object.entries(usersData));
-        
-        return mockUsers.has(normalizedEmail);
+        return !!data;
     } catch (error) {
         console.error('Error checking email existence:', error);
         return false;
@@ -74,18 +77,22 @@ const storeResetToken = async (email: string, token: string): Promise<void> => {
     }
 };
 
-// Function to send password reset email (mock implementation)
-const sendPasswordResetEmail = async (email: string, token: string): Promise<boolean> => {
+// Function to send password reset email using Supabase Auth
+const sendPasswordResetEmail = async (email: string): Promise<boolean> => {
     try {
-        // In a real implementation, this would send an actual email
-        // For now, we'll simulate the email sending process
-        console.log(`📧 [MOCK] Sending password reset email to: ${email}`);
-        console.log(`🔗 [MOCK] Reset link: https://hanapbahay.app/reset-password?token=${token}&email=${encodeURIComponent(email)}`);
+        console.log(`📧 Sending password reset email to: ${email}`);
         
-        // Simulate email sending delay
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Use Supabase Auth to send password reset email
+        const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: 'exp://localhost:8081/reset-password', // Update with your app's deep link
+        });
         
-        console.log('✅ [MOCK] Password reset email sent successfully');
+        if (error) {
+            console.error('❌ Error sending reset email:', error);
+            return false;
+        }
+        
+        console.log('✅ Password reset email sent successfully via Supabase');
         return true;
     } catch (error) {
         console.error('❌ Error sending password reset email:', error);
@@ -116,15 +123,8 @@ export async function forgotPassword(data: ForgotPasswordData) {
         
         console.log('✅ Email found in system:', data.email);
         
-        // Generate reset token
-        const resetToken = generateResetToken();
-        console.log('🔑 Generated reset token:', resetToken);
-        
-        // Store reset token
-        await storeResetToken(data.email, resetToken);
-        
-        // Send password reset email
-        const emailSent = await sendPasswordResetEmail(data.email, resetToken);
+        // Send password reset email via Supabase (no need to generate token manually)
+        const emailSent = await sendPasswordResetEmail(data.email);
         
         if (!emailSent) {
             return {
@@ -139,8 +139,7 @@ export async function forgotPassword(data: ForgotPasswordData) {
         return {
             success: true,
             message: 'Password reset instructions have been sent to your email address.',
-            emailExists: true,
-            resetToken // Include token for testing purposes (remove in production)
+            emailExists: true
         };
         
     } catch (error) {

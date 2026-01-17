@@ -1,0 +1,79 @@
+================================================================================
+SQL SCRIPT ERROR - FIXED!
+================================================================================
+
+PROBLEM:
+  You got errors when running setup-owner-documents-bucket.sql:
+  1. "Error: relation storage.policies does not exist"
+  2. "Error: syntax error at or near NOT" (IF NOT EXISTS not supported)
+
+CAUSE:
+  - Old SQL script tried to query a system table that's not accessible
+  - PostgreSQL doesn't support "IF NOT EXISTS" for CREATE POLICY
+
+FIX APPLIED:
+  ✓ Removed the problematic SELECT query
+  ✓ Changed to use DROP POLICY IF EXISTS before CREATE
+  ✓ Added success message
+  ✓ Updated instructions to create bucket first
+  ✓ Script now works correctly!
+
+FILES UPDATED:
+  ✓ setup-owner-documents-bucket.sql (FIXED)
+  ✓ SUPABASE_SETUP_STEPS.md (NEW - detailed guide)
+  ✓ QUICK_START_GUIDE.md (UPDATED)
+
+================================================================================
+WHAT TO DO NOW:
+================================================================================
+
+STEP 1: Create Bucket (Manual)
+  1. Go to Supabase Dashboard
+  2. Click "Storage" in left sidebar
+  3. Click "New bucket" button
+  4. Name: owner-documents
+  5. Check: "Public bucket" ✓
+  6. Click "Create bucket"
+
+STEP 2: Run SQL Script
+  1. Go to Supabase Dashboard
+  2. Click "SQL Editor" in left sidebar
+  3. Click "New query"
+  4. Open file: Desktop/hanapbahay/setup-owner-documents-bucket.sql
+  5. Copy ALL contents
+  6. Paste into SQL Editor
+  7. Click "Run"
+  8. Should see: "✅ Storage policies created successfully!"
+
+STEP 3: Verify Setup
+  1. Open terminal/command prompt
+  2. cd Desktop/hanapbahay
+  3. Run: node verify-supabase-setup.js
+  4. Should see: "✅ ALL CHECKS PASSED!"
+
+================================================================================
+DETAILED HELP:
+================================================================================
+
+If you need step-by-step instructions with screenshots:
+  → Read: SUPABASE_SETUP_STEPS.md
+
+If you want the quick version:
+  → Read: QUICK_START_GUIDE.md
+
+If SQL script still has errors:
+  → Make sure bucket is created first (Step 1)
+  → Make sure bucket name is exactly: owner-documents
+  → Check that you copied the ENTIRE SQL file
+
+================================================================================
+READY TO TEST!
+================================================================================
+
+Once all 3 steps are complete, test the system:
+  1. Sign up as owner with documents
+  2. Check Supabase Storage for uploaded files
+  3. Log in as barangay official
+  4. View application - should see documents
+
+================================================================================

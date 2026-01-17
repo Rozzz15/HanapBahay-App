@@ -106,6 +106,14 @@ export default function OwnerProfile() {
     }
   }, [user?.name]);
 
+  // Reload profile photo when Edit Profile modal closes
+  useEffect(() => {
+    if (!showEditProfileModal && user?.id) {
+      console.log('🔄 Edit Profile modal closed, reloading profile photo...');
+      loadOwnerProfilePhoto();
+    }
+  }, [showEditProfileModal]);
+
   const loadOwnerProfilePhoto = async () => {
     if (!user?.id) return;
     
@@ -177,23 +185,43 @@ export default function OwnerProfile() {
           const selectedImage = result.assets[0];
           
           let imageUri = selectedImage.uri;
-          if (Platform.OS === 'web' && selectedImage.base64) {
-            imageUri = `data:${selectedImage.type || 'image/jpeg'};base64,${selectedImage.base64}`;
+          let imageData = selectedImage.uri; // Default to URI
+          
+          // Convert to data URI for persistence
+          if (selectedImage.base64) {
+            // Use base64 data if available (more reliable)
+            let mimeType = selectedImage.type || 'image/jpeg';
+            // Normalize MIME type (fix "image" -> "image/jpeg")
+            mimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+            imageData = `data:${mimeType};base64,${selectedImage.base64}`;
+            imageUri = imageData; // Use data URI for both
+            console.log('✅ Using base64 data from ImagePicker, length:', imageData.length);
+          } else if (Platform.OS === 'web' && selectedImage.base64) {
+            let mimeType = selectedImage.type || 'image/jpeg';
+            // Normalize MIME type (fix "image" -> "image/jpeg")
+            mimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+            imageUri = `data:${mimeType};base64,${selectedImage.base64}`;
+            imageData = imageUri;
+          } else {
+            // For file:// URIs, the saveUserProfilePhoto function will convert it
+            console.log('📁 Using file URI (will be converted to base64):', imageUri.substring(0, 50));
           }
           
           // Save to database
           try {
             setSavingPhoto(true);
-            const photoSize = imageUri.length;
+            const photoSize = imageData.length;
             const fileName = `profile_photo_${user?.id}_${Date.now()}.jpg`;
-            const mimeType = imageUri.startsWith('data:') 
-              ? imageUri.split(';')[0].split(':')[1] 
+            let mimeType = imageData.startsWith('data:') 
+              ? imageData.split(';')[0].split(':')[1] 
               : 'image/jpeg';
+            // Normalize MIME type (fix "image" -> "image/jpeg")
+            mimeType = mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
             
             await saveUserProfilePhoto(
               user?.id || '',
               imageUri,
-              imageUri, // Store as both URI and data
+              imageData, // Pass base64 data or file URI (will be converted)
               fileName,
               photoSize,
               mimeType

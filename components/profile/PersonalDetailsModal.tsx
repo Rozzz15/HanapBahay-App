@@ -304,6 +304,24 @@ const PersonalDetailsModal: React.FC<PersonalDetailsModalProps> = ({
                                     <TouchableOpacity
                                         style={[
                                             styles.radioOption,
+                                            tempDetails.familyType === 'couple' && styles.radioOptionSelected
+                                        ]}
+                                        onPress={() => setTempDetails({...tempDetails, familyType: 'couple'})}
+                                    >
+                                        <View style={[
+                                            styles.radioCircle,
+                                            tempDetails.familyType === 'couple' && styles.radioCircleSelected
+                                        ]}>
+                                            {tempDetails.familyType === 'couple' && <View style={styles.radioInner} />}
+                                        </View>
+                                        <Text style={[
+                                            styles.radioText,
+                                            tempDetails.familyType === 'couple' && styles.radioTextSelected
+                                        ]}>Couple</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.radioOption,
                                             tempDetails.familyType === 'family' && styles.radioOptionSelected
                                         ]}
                                         onPress={() => setTempDetails({...tempDetails, familyType: 'family'})}
@@ -318,6 +336,24 @@ const PersonalDetailsModal: React.FC<PersonalDetailsModalProps> = ({
                                             styles.radioText,
                                             tempDetails.familyType === 'family' && styles.radioTextSelected
                                         ]}>Family</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.radioOption,
+                                            tempDetails.familyType === 'group' && styles.radioOptionSelected
+                                        ]}
+                                        onPress={() => setTempDetails({...tempDetails, familyType: 'group'})}
+                                    >
+                                        <View style={[
+                                            styles.radioCircle,
+                                            tempDetails.familyType === 'group' && styles.radioCircleSelected
+                                        ]}>
+                                            {tempDetails.familyType === 'group' && <View style={styles.radioInner} />}
+                                        </View>
+                                        <Text style={[
+                                            styles.radioText,
+                                            tempDetails.familyType === 'group' && styles.radioTextSelected
+                                        ]}>Group/Shared</Text>
                                     </TouchableOpacity>
                                 </View>
                             </View>

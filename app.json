@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/Hanapbahay Logo.png",
     "userInterfaceStyle": "automatic",
-    "owner": "pogi123456",
+    "owner": "rozzz15",
     "platforms": [
       "ios",
       "android",
@@ -93,6 +93,8 @@
       },
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
@@ -123,7 +125,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "677076cd-019c-4f7c-be3d-ddbd6da533cd"
+        "projectId": "ecf3327d-2b1e-4257-aa82-fb63fd950956"
       }
     }
   }

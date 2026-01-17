@@ -466,7 +466,7 @@ export default function ApprovedBookingsPayment({ ownerId }: ApprovedBookingsPay
             {/* Amount Info */}
             <View style={styles.amountContainer}>
               <View style={styles.amountRow}>
-                <Text style={styles.amountLabel}>First Month's Rent:</Text>
+                <Text style={styles.amountLabel}>First Month&apos;s Rent:</Text>
                 <Text style={styles.amountValue}>₱{booking.monthlyRent.toLocaleString()}</Text>
               </View>
               {booking.advanceDepositMonths && booking.advanceDepositMonths > 0 && (

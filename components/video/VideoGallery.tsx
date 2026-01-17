@@ -1,6 +1,7 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, Image, ScrollView, StyleSheet, Dimensions } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, Image, ScrollView, StyleSheet, Dimensions, ActivityIndicator } from 'react-native';
 import { Play } from 'lucide-react-native';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 
 interface VideoGalleryProps {
   videos: string[];
@@ -10,6 +11,35 @@ interface VideoGalleryProps {
 const { width: screenWidth } = Dimensions.get('window');
 
 export default function VideoGallery({ videos, onVideoPress }: VideoGalleryProps) {
+  const [videoThumbnails, setVideoThumbnails] = useState<{ [key: string]: string }>({});
+  const [loadingThumbnails, setLoadingThumbnails] = useState(true);
+
+  // Generate thumbnails for all videos on mount
+  useEffect(() => {
+    const generateThumbnails = async () => {
+      if (!videos || videos.length === 0) return;
+      
+      const thumbnails: { [key: string]: string } = {};
+      
+      for (const videoUri of videos) {
+        try {
+          const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, {
+            time: 1000, // Get thumbnail at 1 second
+            quality: 0.7,
+          });
+          thumbnails[videoUri] = uri;
+        } catch (error) {
+          console.warn('Failed to generate thumbnail for video:', videoUri, error);
+          // Will show placeholder instead
+        }
+      }
+      
+      setVideoThumbnails(thumbnails);
+      setLoadingThumbnails(false);
+    };
+    
+    generateThumbnails();
+  }, [videos]);
   if (!videos || videos.length === 0) {
     return (
       <View style={styles.section}>
@@ -37,21 +67,29 @@ export default function VideoGallery({ videos, onVideoPress }: VideoGalleryProps
         alwaysBounceHorizontal={true}
         scrollEventThrottle={16}
       >
-        {videos.map((video, index) => (
-          <TouchableOpacity 
-            key={index} 
-            style={styles.videoItem}
-            onPress={() => onVideoPress(index)}
-            activeOpacity={0.7}
-          >
-            <Image
-              source={{ uri: video }}
-              style={styles.videoThumbnail}
-              resizeMode="cover"
-              onError={(error) => {
-                console.error('Video thumbnail load error:', error);
-              }}
-            />
+        {videos.map((video, index) => {
+          const thumbnailUri = videoThumbnails[video];
+          
+          return (
+            <TouchableOpacity 
+              key={index} 
+              style={styles.videoItem}
+              onPress={() => onVideoPress(index)}
+              activeOpacity={0.7}
+            >
+              {thumbnailUri ? (
+                <Image
+                  source={{ uri: thumbnailUri }}
+                  style={styles.videoThumbnail}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={[styles.videoThumbnail, { backgroundColor: '#000000', justifyContent: 'center', alignItems: 'center' }]}>
+                  {loadingThumbnails && (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  )}
+                </View>
+              )}
             <View style={styles.videoOverlay}>
               <View style={styles.playIconCircle}>
                 <Play size={24} color="#FFFFFF" fill="#FFFFFF" />
@@ -63,7 +101,8 @@ export default function VideoGallery({ videos, onVideoPress }: VideoGalleryProps
               </Text>
             </View>
           </TouchableOpacity>
-        ))}
+          );
+        })}
       </ScrollView>
     </View>
   );

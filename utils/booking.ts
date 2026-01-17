@@ -132,6 +132,14 @@ export async function createBooking(data: CreateBookingData): Promise<BookingRec
       totalAmount
     });
 
+    // Validate and format tenant phone number
+    // If phone is missing or incomplete (just +63), set as empty to show as "Not provided"
+    let tenantPhone = tenant.phone || '';
+    if (tenantPhone === '+63' || tenantPhone.length < 12) {
+      console.warn('⚠️ Tenant phone number is incomplete or missing:', tenantPhone);
+      tenantPhone = ''; // Will be displayed as "Not provided" in UI
+    }
+
     // Create booking record
     const booking: BookingRecord = {
       id: generateId('booking'),
@@ -152,7 +160,7 @@ export async function createBooking(data: CreateBookingData): Promise<BookingRec
       paymentStatus: 'pending',
       tenantName: tenant.name,
       tenantEmail: tenant.email,
-      tenantPhone: tenant.phone || '',
+      tenantPhone: tenantPhone,
       ownerName: property.ownerName,
       ownerEmail: property.email,
       ownerPhone: property.contactNumber,
@@ -222,28 +230,69 @@ export async function getBookingsByOwner(ownerId: string): Promise<BookingRecord
       .filter(booking => booking.ownerId === ownerId && !booking.isDeleted)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
-    // Load tenant addresses for each booking
-    const bookingsWithTenantAddresses = await Promise.all(
+    // Load tenant details (address, phone, tenant type) for each booking
+    const bookingsWithTenantDetails = await Promise.all(
       ownerBookings.map(async (booking) => {
         try {
-          // Try to get tenant address from tenants table
-          const tenantProfile = await db.get('tenants', booking.tenantId);
-          if (tenantProfile) {
-            const address = (tenantProfile as any).address || '';
+          // Try to get tenant details from users table first (more complete)
+          const userRecord = await db.get('users', booking.tenantId);
+          if (userRecord) {
+            const user = userRecord as DbUserRecord;
+            
+            // Validate and format phone number - reject incomplete phone numbers
+            let tenantPhone = user.phone || booking.tenantPhone || '';
+            if (tenantPhone === '+63' || (tenantPhone.startsWith('+63') && tenantPhone.length < 12)) {
+              console.warn(`⚠️ Incomplete phone for tenant ${booking.tenantId}:`, tenantPhone);
+              tenantPhone = ''; // Will show as "Not provided"
+            }
+            
+            console.log(`📱 Tenant ${booking.tenantId} phone from users table:`, {
+              userPhone: user.phone,
+              validatedPhone: tenantPhone,
+              bookingPhone: booking.tenantPhone,
+              userName: user.name
+            });
+            
             return {
               ...booking,
-              tenantAddress: address
+              tenantPhone: tenantPhone,
+              tenantAddress: user.address || booking.tenantAddress || '',
+              // Use tenant type from booking (what they selected during booking), fallback to profile
+              tenantType: booking.tenantType || (user.familyType as 'individual' | 'family' | 'couple' | 'group' | undefined)
             };
           }
+          
+          // Fallback: Try to get from tenants table
+          const tenantProfile = await db.get('tenants', booking.tenantId);
+          if (tenantProfile) {
+            const tenant = tenantProfile as any;
+            
+            console.log(`📱 Tenant ${booking.tenantId} phone from tenants table:`, {
+              contactNumber: tenant.contactNumber,
+              bookingPhone: booking.tenantPhone
+            });
+            
+            return {
+              ...booking,
+              tenantPhone: tenant.contactNumber || booking.tenantPhone || '',
+              tenantAddress: tenant.address || booking.tenantAddress || ''
+              // tenantType should already be in booking if they selected it during booking
+            };
+          }
+          
+          console.log(`⚠️ No tenant record found for ${booking.tenantId}, using booking data:`, {
+            tenantPhone: booking.tenantPhone,
+            tenantName: booking.tenantName
+          });
         } catch (error) {
-          console.log('⚠️ Could not load tenant address:', error);
+          console.log('⚠️ Could not load tenant details for', booking.tenantId, ':', error);
         }
         return booking;
       })
     );
     
-    console.log(`✅ Loaded ${bookingsWithTenantAddresses.length} bookings for owner with tenant addresses`);
-    return bookingsWithTenantAddresses;
+    console.log(`✅ Loaded ${bookingsWithTenantDetails.length} bookings for owner with complete tenant details`);
+    return bookingsWithTenantDetails;
   } catch (error) {
     console.error('❌ Error loading owner bookings:', error);
     return [];
@@ -286,6 +335,16 @@ export async function updateBookingStatus(
       } catch (paymentError) {
         console.error('❌ Error creating initial payment for approved booking:', paymentError);
         // Don't fail the approval if payment creation fails, but log the error
+      }
+    }
+    
+    // When booking is rejected, clean up notification messages
+    if (status === 'rejected') {
+      try {
+        await cleanupBookingNotificationMessages(booking);
+      } catch (cleanupError) {
+        console.warn('⚠️ Could not clean up notification messages:', cleanupError);
+        // Don't fail the rejection if cleanup fails
       }
     }
     
@@ -758,6 +817,115 @@ export async function cancelBooking(
   }
 }
 
+/**
+ * Clean up notification and payment-related messages for a booking
+ * Used when rejecting or deleting bookings to remove stale messages
+ */
+async function cleanupBookingNotificationMessages(booking: BookingRecord): Promise<void> {
+  try {
+    console.log('🧹 Cleaning up notification messages for booking:', booking.id);
+      const allMessages = await db.list('messages');
+      
+      // Find conversations between owner and tenant for this property
+      const allConversations = await db.list('conversations');
+      const relevantConversations = allConversations.filter((conv: any) => {
+        const ownerMatch = (conv.ownerId === booking.ownerId || conv.owner_id === booking.ownerId);
+        const tenantMatch = (conv.tenantId === booking.tenantId || conv.tenant_id === booking.tenantId);
+        const propertyMatch = !booking.propertyId || (conv.propertyId === booking.propertyId || conv.property_id === booking.propertyId);
+        return ownerMatch && tenantMatch && propertyMatch;
+      });
+    
+    const now = new Date().toISOString();
+    
+    // Delete all notification and payment-related messages in these conversations
+    let deletedCount = 0;
+    for (const conversation of relevantConversations) {
+      const conversationId = (conversation as any).id;
+      const messagesToDelete = allMessages.filter((msg: any) => {
+        if (msg.conversationId !== conversationId) return false;
+        
+        // Delete notifications
+        if (msg.type === 'notification') return true;
+        
+        // Delete payment-related messages (Payment Reminder, Payment Rejected, Payment Confirmed, etc.)
+        const text = (msg.text || '').toLowerCase();
+        if (text.includes('payment reminder') || 
+            text.includes('payment rejected') || 
+            text.includes('payment confirmed') ||
+            text.includes('payment deleted') ||
+            text.includes('payment restored') ||
+            text.includes('payment due') ||
+            text.includes('rent payment received') ||
+            text.includes('rent payment') ||
+            text.includes('overdue payment') ||
+            text.includes('payment auto-deleted') ||
+            text.includes('verify the payment') ||
+            text.includes('please verify') ||
+            text.includes('receipt #')) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      for (const message of messagesToDelete) {
+        await db.remove('messages', (message as any).id);
+        deletedCount++;
+      }
+      
+      // Update conversation unread counts and last message
+      try {
+        const conversation = await db.get('conversations', conversationId);
+        if (conversation) {
+          // Get remaining non-deleted messages to update conversation
+          const remainingMessages = allMessages.filter((msg: any) => 
+            msg.conversationId === conversationId && 
+            !messagesToDelete.some((deleted: any) => deleted.id === msg.id)
+          );
+          
+          const lastRegularMessage = remainingMessages
+            .filter((msg: any) => (msg as any).type !== 'notification')
+            .sort((a: any, b: any) => new Date((b as any).createdAt).getTime() - new Date((a as any).createdAt).getTime())[0];
+          
+          const lastMessageText = lastRegularMessage 
+            ? ((lastRegularMessage as any).type === 'image' ? '📷 Image' : ((lastRegularMessage as any).text || '').substring(0, 100))
+            : '';
+          const lastMessageAt = (lastRegularMessage as any)?.createdAt || (conversation as any).lastMessageAt || now;
+          
+          // Recalculate unread counts
+          const tenantUnread = remainingMessages.filter((msg: any) => 
+            msg.senderId === booking.ownerId && 
+            !(msg.readBy || []).includes(booking.tenantId)
+          ).length;
+          
+          const ownerUnread = remainingMessages.filter((msg: any) => 
+            msg.senderId === booking.tenantId && 
+            !(msg.readBy || []).includes(booking.ownerId)
+          ).length;
+          
+          await db.upsert('conversations', conversationId, {
+            ...conversation,
+            lastMessageText,
+            lastMessageAt,
+            unreadByTenant: tenantUnread,
+            unreadByOwner: ownerUnread,
+            updatedAt: now,
+          });
+        }
+      } catch (convError) {
+        console.warn('⚠️ Could not update conversation after message deletion:', convError);
+      }
+    }
+    
+    if (deletedCount > 0) {
+      console.log(`✅ Deleted ${deletedCount} message(s) (notifications and payment-related)`);
+    }
+  } catch (error) {
+    console.error('❌ Error cleaning up notification messages:', error);
+    throw error;
+  }
+}
+
 // Delete booking (for owners) - Soft deletes the booking (preserves for analytics)
 export async function deleteBookingByOwner(bookingId: string, ownerId: string): Promise<boolean> {
   try {
@@ -785,105 +953,12 @@ export async function deleteBookingByOwner(bookingId: string, ownerId: string): 
     await db.upsert('bookings', bookingId, updatedBooking);
     console.log('✅ Booking soft-deleted successfully by owner (preserved for analytics)');
     
-    // Delete all messages related to this booking/tenant removal (notifications and payment-related)
+    // Clean up notification and payment-related messages
     try {
-      const allMessages = await db.list('messages');
-      
-      // Find conversations between owner and tenant for this property
-      const allConversations = await db.list('conversations');
-      const relevantConversations = allConversations.filter((conv: any) => {
-        const ownerMatch = (conv.ownerId === booking.ownerId || conv.owner_id === booking.ownerId);
-        const tenantMatch = (conv.tenantId === booking.tenantId || conv.tenant_id === booking.tenantId);
-        const propertyMatch = !booking.propertyId || (conv.propertyId === booking.propertyId || conv.property_id === booking.propertyId);
-        return ownerMatch && tenantMatch && propertyMatch;
-      });
-      
-      // Delete all notification and payment-related messages in these conversations
-      let deletedCount = 0;
-      for (const conversation of relevantConversations) {
-        const conversationId = (conversation as any).id;
-        const messagesToDelete = allMessages.filter((msg: any) => {
-          if (msg.conversationId !== conversationId) return false;
-          
-          // Delete notifications
-          if (msg.type === 'notification') return true;
-          
-          // Delete payment-related messages (Payment Reminder, Payment Rejected, Payment Confirmed, etc.)
-          const text = (msg.text || '').toLowerCase();
-          if (text.includes('payment reminder') || 
-              text.includes('payment rejected') || 
-              text.includes('payment confirmed') ||
-              text.includes('payment deleted') ||
-              text.includes('payment restored') ||
-              text.includes('payment due') ||
-              text.includes('rent payment received') ||
-              text.includes('rent payment') ||
-              text.includes('overdue payment') ||
-              text.includes('payment auto-deleted') ||
-              text.includes('verify the payment') ||
-              text.includes('please verify') ||
-              text.includes('receipt #')) {
-            return true;
-          }
-          
-          return false;
-        });
-        
-        for (const message of messagesToDelete) {
-          await db.remove('messages', (message as any).id);
-          deletedCount++;
-        }
-        
-        // Update conversation unread counts and last message
-        try {
-          const conversation = await db.get('conversations', conversationId);
-          if (conversation) {
-            // Get remaining non-deleted messages to update conversation
-            const remainingMessages = allMessages.filter((msg: any) => 
-              msg.conversationId === conversationId && 
-              !messagesToDelete.some((deleted: any) => deleted.id === msg.id)
-            );
-            
-            const lastRegularMessage = remainingMessages
-              .filter((msg: any) => (msg as any).type !== 'notification')
-              .sort((a: any, b: any) => new Date((b as any).createdAt).getTime() - new Date((a as any).createdAt).getTime())[0];
-            
-            const lastMessageText = lastRegularMessage 
-              ? ((lastRegularMessage as any).type === 'image' ? '📷 Image' : ((lastRegularMessage as any).text || '').substring(0, 100))
-              : '';
-            const lastMessageAt = (lastRegularMessage as any)?.createdAt || (conversation as any).lastMessageAt || now;
-            
-            // Recalculate unread counts
-            const tenantUnread = remainingMessages.filter((msg: any) => 
-              msg.senderId === booking.ownerId && 
-              !(msg.readBy || []).includes(booking.tenantId)
-            ).length;
-            
-            const ownerUnread = remainingMessages.filter((msg: any) => 
-              msg.senderId === booking.tenantId && 
-              !(msg.readBy || []).includes(booking.ownerId)
-            ).length;
-            
-            await db.upsert('conversations', conversationId, {
-              ...conversation,
-              lastMessageText,
-              lastMessageAt,
-              unreadByTenant: tenantUnread,
-              unreadByOwner: ownerUnread,
-              updatedAt: now,
-            });
-          }
-        } catch (convError) {
-          console.warn('⚠️ Could not update conversation after message deletion:', convError);
-        }
-      }
-      
-      if (deletedCount > 0) {
-        console.log(`✅ Deleted ${deletedCount} message(s) (notifications and payment-related) related to removed tenant`);
-      }
-    } catch (notificationError) {
-      console.warn('⚠️ Could not delete notification messages:', notificationError);
-      // Don't fail the deletion if notification cleanup fails
+      await cleanupBookingNotificationMessages(booking);
+    } catch (cleanupError) {
+      console.warn('⚠️ Could not clean up notification messages:', cleanupError);
+      // Don't fail the deletion if cleanup fails
     }
     
     // Delete or mark pending/overdue payments as cancelled
@@ -1036,7 +1111,7 @@ export async function getUnviewedBookingNotificationsCount(tenantId: string): Pr
       // Check if booking was updated after last view
       const wasUpdated = booking.updatedAt && booking.createdAt && 
                         new Date(booking.updatedAt) > new Date(booking.createdAt);
-      const wasViewed = booking.notificationViewedByTenant === true;
+      const wasViewed = !!booking.notificationViewedByTenant; // Check if timestamp exists
       
       return wasUpdated && !wasViewed;
     }).length;
@@ -1057,13 +1132,15 @@ export async function markBookingNotificationsAsViewed(tenantId: string): Promis
     const allBookings = await db.list<BookingRecord>('bookings');
     const tenantBookings = allBookings.filter(booking => booking.tenantId === tenantId);
     
+    const now = new Date().toISOString();
+    
     for (const booking of tenantBookings) {
       if (!booking.notificationViewedByTenant) {
         const updatedBooking: BookingRecord = {
           ...booking,
-          notificationViewedByTenant: true,
-          notificationViewedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          notificationViewedByTenant: now, // Use timestamp instead of boolean
+          notificationViewedAt: now,
+          updatedAt: now
         };
         
         await db.upsert('bookings', booking.id, updatedBooking);

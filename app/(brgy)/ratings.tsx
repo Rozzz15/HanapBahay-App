@@ -22,13 +22,24 @@ interface EnrichedRating extends PropertyRatingRecord {
   propertyAddress: string;
   tenantName?: string;
   ownerName?: string;
+  ownerId?: string;
+  ownerBusinessName?: string;
+}
+
+interface OwnerRatingsGroup {
+  ownerId: string;
+  ownerName: string;
+  ownerBusinessName?: string;
+  properties: PropertyRatingsGroup[];
+  totalRatings: number;
+  averageRating: number;
+  latestRatingDate: string;
 }
 
 interface PropertyRatingsGroup {
   propertyId: string;
   propertyTitle: string;
   propertyAddress: string;
-  ownerName?: string;
   ratings: EnrichedRating[];
   averageRating: number;
   latestRatingDate: string;
@@ -42,46 +53,78 @@ export default function BrgyRatingsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [barangayName, setBarangayName] = useState<string>('');
 
-  const propertyRatingGroups = useMemo<PropertyRatingsGroup[]>(() => {
+  const ownerRatingGroups = useMemo<OwnerRatingsGroup[]>(() => {
     if (!ratings.length) return [];
 
-    const groupsMap: Record<string, PropertyRatingsGroup> = {};
-
+    // First group by property
+    const propertyGroupsMap: Record<string, PropertyRatingsGroup> = {};
     ratings.forEach((rating) => {
-      if (!groupsMap[rating.propertyId]) {
-        groupsMap[rating.propertyId] = {
+      if (!propertyGroupsMap[rating.propertyId]) {
+        propertyGroupsMap[rating.propertyId] = {
           propertyId: rating.propertyId,
           propertyTitle: rating.propertyTitle || 'Untitled Listing',
           propertyAddress: rating.propertyAddress || 'Address not provided',
-          ownerName: rating.ownerName,
           ratings: [],
           averageRating: 0,
           latestRatingDate: rating.createdAt,
         };
       }
-      groupsMap[rating.propertyId].ratings.push(rating);
+      propertyGroupsMap[rating.propertyId].ratings.push(rating);
     });
 
-    return Object.values(groupsMap)
-      .map((group) => {
-        const sortedRatings = [...group.ratings].sort(
-          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        const averageRating =
-          sortedRatings.reduce((sum, current) => sum + current.rating, 0) /
-          sortedRatings.length;
-        return {
-          ...group,
-          ratings: sortedRatings,
-          averageRating,
-          latestRatingDate: sortedRatings[0]?.createdAt ?? group.latestRatingDate,
+    // Calculate averages for each property
+    const propertyGroups = Object.values(propertyGroupsMap).map((group) => ({
+      ...group,
+      ratings: group.ratings.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ),
+      averageRating:
+        group.ratings.reduce((sum, current) => sum + current.rating, 0) /
+        group.ratings.length,
+    }));
+
+    // Then group properties by owner
+    const ownerGroupsMap: Record<string, OwnerRatingsGroup> = {};
+    propertyGroups.forEach((propertyGroup) => {
+      const firstRating = propertyGroup.ratings[0];
+      const ownerId = firstRating.ownerId || 'unknown';
+      
+      if (!ownerGroupsMap[ownerId]) {
+        ownerGroupsMap[ownerId] = {
+          ownerId,
+          ownerName: firstRating.ownerName || 'Unknown Owner',
+          ownerBusinessName: firstRating.ownerBusinessName,
+          properties: [],
+          totalRatings: 0,
+          averageRating: 0,
+          latestRatingDate: propertyGroup.latestRatingDate,
         };
-      })
-      .sort(
-        (a, b) =>
-          new Date(b.latestRatingDate).getTime() -
-          new Date(a.latestRatingDate).getTime()
-      );
+      }
+      
+      ownerGroupsMap[ownerId].properties.push(propertyGroup);
+      ownerGroupsMap[ownerId].totalRatings += propertyGroup.ratings.length;
+      
+      // Update latest rating date
+      if (new Date(propertyGroup.latestRatingDate) > new Date(ownerGroupsMap[ownerId].latestRatingDate)) {
+        ownerGroupsMap[ownerId].latestRatingDate = propertyGroup.latestRatingDate;
+      }
+    });
+
+    // Calculate average rating for each owner across all their properties
+    return Object.values(ownerGroupsMap).map((ownerGroup) => {
+      const allRatings = ownerGroup.properties.flatMap(p => p.ratings);
+      const averageRating = allRatings.reduce((sum, r) => sum + r.rating, 0) / allRatings.length;
+      
+      return {
+        ...ownerGroup,
+        averageRating,
+        properties: ownerGroup.properties.sort((a, b) => 
+          new Date(b.latestRatingDate).getTime() - new Date(a.latestRatingDate).getTime()
+        ),
+      };
+    }).sort((a, b) => {
+      return new Date(b.latestRatingDate).getTime() - new Date(a.latestRatingDate).getTime();
+    });
   }, [ratings]);
 
   useEffect(() => {
@@ -135,6 +178,59 @@ export default function BrgyRatingsPage() {
     });
   };
 
+  const renderOwnerGroup = (ownerGroup: OwnerRatingsGroup) => (
+    <View key={ownerGroup.ownerId} style={[sharedStyles.card, { marginBottom: designTokens.spacing.lg }]}>
+      {/* Owner Header */}
+      <View style={styles.ownerHeader}>
+        <View style={[iconBackgrounds.success, styles.ownerIcon]}>
+          <Building2 size={24} color={designTokens.colors.success} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.ownerName}>{ownerGroup.ownerName}</Text>
+          {ownerGroup.ownerBusinessName && (
+            <Text style={styles.ownerBusinessName}>
+              {ownerGroup.ownerBusinessName}
+            </Text>
+          )}
+          <View style={styles.ownerStatsRow}>
+            <View style={styles.starRow}>
+              {[...Array(5)].map((_, i) => {
+                const isFilled = i < Math.round(ownerGroup.averageRating);
+                return (
+                  <Star
+                    key={i}
+                    size={14}
+                    color={isFilled ? '#F59E0B' : '#E5E7EB'}
+                    fill={isFilled ? '#F59E0B' : 'transparent'}
+                    style={styles.starIcon}
+                  />
+                );
+              })}
+              <Text style={styles.ownerRatingValue}>
+                {ownerGroup.averageRating.toFixed(1)}
+              </Text>
+            </View>
+            <Text style={styles.ownerStatsText}>
+              • {ownerGroup.totalRatings} rating{ownerGroup.totalRatings > 1 ? 's' : ''} • {ownerGroup.properties.length} propert{ownerGroup.properties.length > 1 ? 'ies' : 'y'}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Properties List */}
+      <View style={styles.propertiesContainer}>
+        {ownerGroup.properties.map((propertyGroup, index) => (
+          <View key={propertyGroup.propertyId} style={[
+            styles.propertySection,
+            index < ownerGroup.properties.length - 1 && styles.propertyBorderBottom
+          ]}>
+            {renderPropertyGroup(propertyGroup)}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+
   const renderPropertyGroup = (group: PropertyRatingsGroup) => (
     <View key={group.propertyId} style={[sharedStyles.card, styles.propertyCard]}>
       <View style={styles.propertyHeader}>
@@ -146,12 +242,6 @@ export default function BrgyRatingsPage() {
               {group.propertyAddress}
             </Text>
           </View>
-          {group.ownerName && (
-            <View style={styles.propertyOwnerRow}>
-              <Building2 size={14} color={designTokens.colors.success} />
-              <Text style={styles.propertyOwnerText}>Owner: {group.ownerName}</Text>
-            </View>
-          )}
         </View>
         <View style={styles.propertyStats}>
           <View style={styles.starRow}>
@@ -226,7 +316,7 @@ export default function BrgyRatingsPage() {
 
               {rating.ownerReply && (
                 <View style={styles.replyBubble}>
-                  <Text style={styles.replyLabel}>Owner's Reply</Text>
+                  <Text style={styles.replyLabel}>Owner&apos;s Reply</Text>
                   <Text style={styles.replyText}>{rating.ownerReply}</Text>
                   {rating.ownerReplyAt && (
                     <Text style={styles.replyDate}>
@@ -335,7 +425,7 @@ export default function BrgyRatingsPage() {
         )}
 
         {/* Ratings List */}
-        {propertyRatingGroups.length === 0 ? (
+        {ownerRatingGroups.length === 0 ? (
           <View style={sharedStyles.emptyState}>
             <Star size={48} color={designTokens.colors.textMuted} />
             <Text style={sharedStyles.emptyStateTitle}>No Ratings Yet</Text>
@@ -344,7 +434,7 @@ export default function BrgyRatingsPage() {
             </Text>
           </View>
         ) : (
-          propertyRatingGroups.map(renderPropertyGroup)
+          ownerRatingGroups.map(renderOwnerGroup)
         )}
       </ScrollView>
     </View>
@@ -489,5 +579,60 @@ const styles = StyleSheet.create({
     marginTop: designTokens.spacing.xs,
     fontSize: designTokens.typography.xs,
     color: designTokens.colors.textMuted,
+  },
+  // Owner Group Styles
+  ownerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: designTokens.spacing.md,
+    marginBottom: designTokens.spacing.lg,
+    paddingBottom: designTokens.spacing.md,
+    borderBottomWidth: 2,
+    borderBottomColor: designTokens.colors.border,
+  },
+  ownerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  ownerName: {
+    fontSize: designTokens.typography.lg,
+    fontWeight: designTokens.typography.bold as any,
+    color: designTokens.colors.textPrimary,
+    marginBottom: 2,
+  },
+  ownerBusinessName: {
+    fontSize: designTokens.typography.sm,
+    fontWeight: designTokens.typography.semibold as any,
+    color: designTokens.colors.primary,
+    marginBottom: designTokens.spacing.xs,
+  },
+  ownerStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: designTokens.spacing.sm,
+    marginTop: 4,
+  },
+  ownerRatingValue: {
+    fontSize: designTokens.typography.sm,
+    fontWeight: designTokens.typography.semibold as any,
+    color: designTokens.colors.textPrimary,
+    marginLeft: 4,
+  },
+  ownerStatsText: {
+    fontSize: designTokens.typography.xs,
+    color: designTokens.colors.textMuted,
+  },
+  propertiesContainer: {
+    gap: designTokens.spacing.md,
+  },
+  propertySection: {
+    paddingVertical: designTokens.spacing.sm,
+  },
+  propertyBorderBottom: {
+    borderBottomWidth: 1,
+    borderBottomColor: designTokens.colors.border,
   },
 });

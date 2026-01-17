@@ -94,22 +94,51 @@ export default function ListingDashboard() {
       console.log('🔄 Loading published listings for guest dashboard...');
       
       const rawListings = await db.list<PublishedListingRecord>('published_listings');
+      console.log(`📊 Raw listings from database: ${rawListings.length}`);
+      
       const publishedListings = rawListings.filter(isPublishedListingRecord);
+      console.log(`📊 After type filter: ${publishedListings.length}`);
+      
+      // Debug: Log first listing to see field names
+      if (publishedListings.length > 0) {
+        const first = publishedListings[0];
+        console.log('🔍 First listing debug:', {
+          id: first.id,
+          status: first.status,
+          availabilityStatus: first.availabilityStatus,
+          propertyType: first.propertyType,
+          hasAllFields: !!(first.status && first.availabilityStatus)
+        });
+      }
       
       // Filter only available listings and check capacity
       const { areAllRoomsFullyOccupied } = await import('../utils/listing-capacity');
       
       const availableListings = [];
       for (const listing of publishedListings) {
-        if (listing.availabilityStatus === 'available' && listing.status === 'published') {
+        console.log(`🔍 Checking listing ${listing.id}:`, {
+          status: listing.status,
+          availabilityStatus: listing.availabilityStatus,
+          propertyType: listing.propertyType,
+          title: listing.title
+        });
+        
+        // FIXED: Only check if published (removed strict availabilityStatus check)
+        // This matches the tenant dashboard behavior
+        if (listing.status === 'published') {
+          console.log(`✅ Listing ${listing.id} is published, checking capacity...`);
           // Check if all rooms are fully occupied (for listings with room capacities)
           // or if overall capacity is reached (for listings without room capacities)
           const allRoomsOccupied = await areAllRoomsFullyOccupied(listing);
+          console.log(`   Capacity check - Fully occupied: ${allRoomsOccupied}`);
           if (!allRoomsOccupied) {
+            console.log(`   ✅ Adding listing ${listing.id} to available listings`);
             availableListings.push(listing);
           } else {
-            console.log(`🚫 Listing ${listing.id} has all rooms fully occupied, filtering out`);
+            console.log(`   🚫 Listing ${listing.id} has all rooms fully occupied, filtering out`);
           }
+        } else {
+          console.log(`   ❌ Listing ${listing.id} skipped - status is "${listing.status}" not "published"`);
         }
       }
       
@@ -121,7 +150,7 @@ export default function ListingDashboard() {
       });
       
       setListings(availableListings);
-      console.log(`✅ Loaded ${availableListings.length} available listings`);
+      console.log(`✅ Loaded ${availableListings.length} available listings (from ${publishedListings.length} total published)`);
       
       // Load ratings for all listings
       if (availableListings.length > 0) {

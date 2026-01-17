@@ -141,10 +141,8 @@ export default function LoginModal({ visible, onClose, onLoginSuccess, onSwitchT
                 setCountdown(newCountdown);
                 await AsyncStorage.setItem('login_countdown_end', countdownEnd.toString());
                 
-                showSimpleAlert(
-                    'Account Temporarily Locked 🔒',
-                    `Too many failed login attempts. Please wait ${newCountdown} seconds before trying again.`
-                );
+                // Use toast notification instead of alert
+                toast.show(`⏰ Account locked. Please wait ${newCountdown} more seconds before trying again.`);
                 return;
             }
             
@@ -213,8 +211,6 @@ export default function LoginModal({ visible, onClose, onLoginSuccess, onSwitchT
                     userId = (result as any).user?.id || (result as any).id;
                 }
                 
-                toast.show(notifications.loginSuccess());
-                
                 console.log('🔍 Login redirect - roles:', roles, 'userId:', userId);
                 
                 if (!roles || roles.length === 0) {
@@ -228,10 +224,31 @@ export default function LoginModal({ visible, onClose, onLoginSuccess, onSwitchT
                     return;
                 }
                 
+                // Check if owner and if approved before showing success toast
+                const isOwner = Array.isArray(roles) && roles.includes('owner');
+                
+                if (isOwner && userId) {
+                    // Check owner approval status
+                    const approved = await isOwnerApproved(userId);
+                    
+                    if (!approved) {
+                        // Owner not approved - don't show success toast
+                        console.log('⚠️ Owner not approved yet');
+                        // The owner layout will show the pending approval message
+                        // Don't show "Welcome back" toast for unapproved owners
+                    } else {
+                        // Owner is approved - show success toast
+                        toast.show(notifications.loginSuccess());
+                    }
+                } else {
+                    // Tenant or barangay official - always show success toast
+                    toast.show(notifications.loginSuccess());
+                }
+                
                 // Redirect immediately - approval checks happen in layout/dashboard
                 // This allows UI to show faster while checks happen in background
                 try {
-                    if (Array.isArray(roles) && roles.includes('owner')) {
+                    if (isOwner) {
                         // Redirect immediately, approval check happens in owner layout
                         console.log('🏠 Redirecting owner to dashboard...');
                         if (userId) {
@@ -285,23 +302,28 @@ export default function LoginModal({ visible, onClose, onLoginSuccess, onSwitchT
                         setIsLocked(true);
                         await AsyncStorage.setItem('login_countdown_end', countdownEnd.toString());
                         
-                        showSimpleAlert(
-                            'Account Temporarily Locked 🔒',
-                            `Too many failed login attempts. Please wait ${initialCountdown} seconds before trying again.`
-                        );
+                        // Use toast notification instead of alert
+                        toast.show(`🔒 Account Temporarily Locked. Too many failed attempts. Please wait ${initialCountdown} seconds before trying again.`);
                     } else {
                         const remainingAttempts = 5 - newFailedAttempts;
-                        showSimpleAlert(
-                            'Login Failed ❌',
-                            `${errorMessage} ${remainingAttempts > 0 ? `${remainingAttempts} attempt${remainingAttempts > 1 ? 's' : ''} remaining before account lock.` : ''}`
-                        );
+                        // Use toast notification with remaining attempts
+                        toast.show(`⚠️ Incorrect Password. ${remainingAttempts} attempt${remainingAttempts > 1 ? 's' : ''} remaining before account lock.`);
                     }
+                } else if (errorType === 'USER_NOT_FOUND' || errorType === 'ACCOUNT_NOT_FOUND') {
+                    // Account not found - show specific message
+                    toast.show('❌ Account Not Found. No account exists with this email address. Please check your email or create a new account.');
+                } else if (errorType === 'OWNER_PENDING_APPROVAL') {
+                    // Owner pending approval - show application status
+                    showSimpleAlert('Application Pending', 'Your owner application is pending approval from your Barangay. You will receive a notification once your application is approved.');
+                } else if (errorType === 'EMAIL_NOT_CONFIRMED') {
+                    // Email not confirmed - show verification reminder (only for tenants)
+                    toast.show('⚠️ Email Not Verified. Please check your email and verify your account before logging in.');
+                } else if (errorType === 'UNKNOWN_ERROR' && errorMessage.toLowerCase().includes('credential')) {
+                    // Generic invalid credentials error
+                    toast.show('❌ Invalid Credentials. The email or password you entered is incorrect. Please check and try again.');
                 } else {
-                    // Account not found or other errors - don't track attempts
-                    showSimpleAlert(
-                        'Login Failed ❌',
-                        errorMessage
-                    );
+                    // Other errors - show generic login error
+                    toast.show('❌ Login Failed. Invalid email or password. Please check your credentials and try again.');
                 }
             }
         } catch (error) {
@@ -318,10 +340,8 @@ export default function LoginModal({ visible, onClose, onLoginSuccess, onSwitchT
             setPassword('');
             
             // For catch block errors, we don't track attempts (these are usually system errors)
-            showSimpleAlert(
-                'Login Failed ❌',
-                errorMessage
-            );
+            // Use toast notification instead of alert
+            toast.show('❌ Login Failed. An unexpected error occurred. Please try again.');
         } finally {
             setIsSubmitting(false);
         }

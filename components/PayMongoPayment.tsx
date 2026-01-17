@@ -543,7 +543,7 @@ export default function PayMongoPayment({
                 <View style={styles.infoContainer}>
                   <Ionicons name="information-circle" size={20} color="#3B82F6" />
                   <Text style={styles.infoText}>
-                    Your payment will be securely processed by Paymongo. You'll be redirected to complete the payment.
+                    Your payment will be securely processed by Paymongo. You&apos;ll be redirected to complete the payment.
                   </Text>
                 </View>
               </>

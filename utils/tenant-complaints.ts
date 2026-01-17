@@ -186,6 +186,78 @@ export async function getNewComplaintsCount(barangayName: string): Promise<numbe
 }
 
 /**
+ * Mark complaint as read by barangay official
+ */
+export async function markComplaintAsRead(
+  complaintId: string,
+  userId: string
+): Promise<boolean> {
+  try {
+    const complaint = await db.get<TenantComplaintRecord>('tenant_complaints', complaintId);
+    if (!complaint) {
+      throw new Error('Complaint not found');
+    }
+
+    // Only mark as read if it's currently unread
+    if (!complaint.isRead) {
+      // Create update object without read fields first (in case columns don't exist yet)
+      const baseUpdate = {
+        ...complaint,
+        updatedAt: new Date().toISOString(),
+      };
+      
+      // Try to add read fields (will be stripped if columns don't exist)
+      const updated: TenantComplaintRecord = {
+        ...baseUpdate,
+        isRead: true,
+        readAt: new Date().toISOString(),
+        readBy: userId,
+      };
+
+      await db.upsert('tenant_complaints', complaintId, updated);
+      console.log('✅ Marked complaint as read:', complaintId);
+      return true;
+    }
+    
+    return false; // Already read
+  } catch (error: any) {
+    // If error is due to missing columns, just log and continue
+    if (error?.code === 'PGRST204') {
+      console.warn('⚠️ Read status columns not yet added to database. Please run add-complaint-read-status.sql migration.');
+      return false;
+    }
+    console.error('❌ Error marking complaint as read:', error);
+    return false;
+  }
+}
+
+/**
+ * Get unread complaints count for barangay
+ */
+export async function getUnreadComplaintsCount(barangayName: string): Promise<number> {
+  try {
+    const complaints = await getComplaintsByBarangay(barangayName);
+    // Filter for unread complaints (if is_read field exists, use it; otherwise count submitted)
+    return complaints.filter(c => {
+      // If is_read field exists, use it
+      if (c.hasOwnProperty('isRead')) {
+        return !c.isRead && c.status === 'submitted';
+      }
+      // Fallback: if is_read doesn't exist yet, just count all submitted
+      return c.status === 'submitted';
+    }).length;
+  } catch (error: any) {
+    // If error is due to missing columns, return 0 gracefully
+    if (error?.code === 'PGRST204') {
+      console.warn('⚠️ Read status columns not yet added. Returning 0 unread count.');
+      return 0;
+    }
+    console.error('❌ Error getting unread complaints count:', error);
+    return 0;
+  }
+}
+
+/**
  * Get complaint with full details (including tenant and property info)
  */
 export async function getComplaintWithDetails(complaintId: string): Promise<{
@@ -259,5 +331,51 @@ export function getUrgencyColor(urgency: TenantComplaintRecord['urgency']): stri
     urgent: '#DC2626',
   };
   return colors[urgency] || '#6B7280';
+}
+
+/**
+ * Delete a tenant complaint
+ * Only allows deletion if complaint is still in 'submitted' status
+ */
+export async function deleteTenantComplaint(complaintId: string, tenantId: string): Promise<boolean> {
+  try {
+    console.log('🗑️ Attempting to delete complaint:', complaintId, 'for tenant:', tenantId);
+    
+    // Get all complaints to see what's in the database
+    const allComplaints = await db.list<TenantComplaintRecord>('tenant_complaints');
+    console.log('📋 Total complaints in database:', allComplaints.length);
+    
+    // Find the complaint in the list
+    const complaint = allComplaints.find(c => c.id === complaintId);
+    
+    if (!complaint) {
+      console.error('❌ Complaint not found in database. ID:', complaintId);
+      console.log('Available complaint IDs:', allComplaints.map(c => c.id));
+      throw new Error('Complaint not found in database');
+    }
+    
+    console.log('✓ Found complaint:', complaint.id, 'status:', complaint.status, 'tenant:', complaint.tenantId);
+    
+    // Verify the complaint belongs to the tenant
+    if (complaint.tenantId !== tenantId) {
+      console.error('❌ Unauthorized deletion attempt. Complaint tenant:', complaint.tenantId, 'Current user:', tenantId);
+      throw new Error('Unauthorized: You can only delete your own complaints');
+    }
+    
+    // Only allow deletion if complaint is still submitted (not yet processed by barangay)
+    if (complaint.status !== 'submitted') {
+      console.error('❌ Cannot delete. Complaint status:', complaint.status);
+      throw new Error('Cannot delete complaint: It has already been processed by the barangay');
+    }
+    
+    // Delete the complaint
+    await db.remove('tenant_complaints', complaintId);
+    console.log('✅ Successfully deleted tenant complaint:', complaintId);
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Error deleting tenant complaint:', error);
+    throw error;
+  }
 }
 

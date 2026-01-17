@@ -9,10 +9,22 @@ interface VideoPlayerModalProps {
 }
 
 export default function VideoPlayerModal({ videoUri, onClose }: VideoPlayerModalProps) {
+  const [error, setError] = React.useState<string | null>(null);
+  
   const player = useVideoPlayer(videoUri, (player) => {
     player.loop = false;
     player.play();
   });
+
+  React.useEffect(() => {
+    // Check if video URI is valid
+    if (!videoUri || videoUri.trim() === '') {
+      setError('Invalid video URI');
+      return;
+    }
+    
+    console.log('Video player rendering with URI:', videoUri);
+  }, [videoUri]);
 
   return (
     <View style={styles.container}>
@@ -20,12 +32,27 @@ export default function VideoPlayerModal({ videoUri, onClose }: VideoPlayerModal
         <X size={24} color="#FFFFFF" />
       </TouchableOpacity>
       
-      <VideoView
-        player={player}
-        style={styles.video}
-        contentFit="contain"
-        nativeControls
-      />
+      {error ? (
+        <View style={{ padding: 20, alignItems: 'center' }}>
+          <Text style={{ color: '#FFFFFF', fontSize: 16, textAlign: 'center' }}>
+            Failed to load video
+          </Text>
+          <Text style={{ color: '#CCCCCC', fontSize: 14, marginTop: 10, textAlign: 'center' }}>
+            {error}
+          </Text>
+        </View>
+      ) : (
+        <VideoView
+          player={player}
+          style={styles.video}
+          contentFit="contain"
+          nativeControls
+          onLoadError={(event) => {
+            console.error('Video load error:', event);
+            setError('The video file could not be loaded. It may have been deleted from cache.');
+          }}
+        />
+      )}
     </View>
   );
 }

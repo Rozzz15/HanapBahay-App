@@ -1,266 +1,172 @@
-# ✅ Deployment Checklist
+# HanapBahay Production Deployment Checklist
 
-Use this checklist to ensure everything is set up correctly before and after deployment.
+## 🔐 Security Setup (CRITICAL)
 
-## 📋 Pre-Deployment Checklist
+### 1. Barangay Official Accounts
+- [ ] Update barangay official email addresses in `scripts/create-brgy-officials.ts`
+- [ ] Update phone numbers to real contact numbers
+- [ ] Set environment to production: `export NODE_ENV=production`
+- [ ] Run: `npx tsx scripts/create-brgy-officials.ts`
+- [ ] Save all generated passwords securely (use password manager)
+- [ ] Share credentials with officials through secure channels only
+- [ ] Instruct officials to change passwords on first login
 
-### Environment Variables
+### 2. Environment Variables
+- [ ] Create `.env.production` file
+- [ ] Set `EXPO_PUBLIC_ENV=production`
+- [ ] Update Supabase URL and keys for production database
+- [ ] Remove any test/development credentials
 
-#### Frontend (`.env` file in project root)
-- [ ] `EXPO_PUBLIC_SUPABASE_URL` - Your Supabase project URL
-- [ ] `EXPO_PUBLIC_SUPABASE_ANON_KEY` - Your Supabase anon key
-- [ ] `EXPO_PUBLIC_API_URL` - Your backend API URL (production)
+### 3. Database Setup
+- [ ] Create production Supabase project
+- [ ] Run database migrations
+- [ ] Set up Row Level Security (RLS) policies
+- [ ] Configure storage buckets with proper permissions
+- [ ] Disable email confirmation for owner accounts (if desired)
 
-**Template:** See `env.template` file
-
-#### Backend (`server/.env` file)
-- [ ] `PAYMONGO_SECRET_KEY` - PayMongo secret key (use `sk_live_` for production)
-- [ ] `PAYMONGO_PUBLIC_KEY` - PayMongo public key (use `pk_live_` for production)
-- [ ] `PORT` - Server port (usually auto-set by hosting provider)
-- [ ] `PAYMONGO_WEBHOOK_SECRET` - Webhook secret (if using webhooks)
-
-**Template:** See `server/env.template` file
-
-### Configuration Files
-
-- [ ] `app.json` - App name, version, bundle IDs configured
-- [ ] `eas.json` - EAS build profiles configured
-- [ ] Supabase project created and configured
-
-### Assets
-
-- [ ] App icon (`assets/images/icon.png`)
-- [ ] Splash screen (`assets/images/splash-icon.png`)
-- [ ] Favicon for web (`assets/images/favicon.png`)
-
-### Testing
-
-- [ ] All features tested locally
-- [ ] Payment flow tested (with test cards)
-- [ ] Login/signup working
-- [ ] Database connections working
-- [ ] API endpoints responding correctly
-
-### Accounts & Services
-
-- [ ] Expo account created and logged in
-- [ ] Supabase project created
-- [ ] PayMongo account created (production mode)
-- [ ] Google Play Console account (for Android)
-- [ ] Apple Developer account (for iOS) - $99/year
+### 4. Remove Test Data
+- [ ] Delete all test accounts from development
+- [ ] Clear test listings and bookings
+- [ ] Remove development barangay accounts
+- [ ] Verify no test data in production database
 
 ---
 
-## 🌐 Web Deployment Checklist
+## 📱 App Configuration
 
-### Build & Deploy
-- [ ] Web app built (`npm run build:web`)
-- [ ] Static files generated in `dist/` folder
-- [ ] Deployed to hosting service (Cloudflare Pages, GitHub Pages, or Supabase Storage)
-- [ ] Environment variables set in hosting platform
-- [ ] Custom domain configured (optional)
-- [ ] SSL certificate active (automatic)
+### 5. Update App Information
+- [ ] Update app name in `app.json`
+- [ ] Update package name/bundle identifier
+- [ ] Set correct version number
+- [ ] Update app description and keywords
 
-### Hosting Options
-Choose one:
-- [ ] **Cloudflare Pages** - Connected to GitHub, auto-deploys
-- [ ] **GitHub Pages** - Static hosting via GitHub
-- [ ] **Supabase Storage** - Files uploaded to public bucket
-
-### Testing
-- [ ] Web app loads correctly
-- [ ] All pages navigable
-- [ ] Forms submit correctly
-- [ ] API calls working
-- [ ] Payment flow working
-- [ ] Mobile-responsive design works
+### 6. Assets
+- [ ] Use production logo and icons
+- [ ] Update splash screen
+- [ ] Add proper app store screenshots
+- [ ] Update barangay logos if needed
 
 ---
 
-## 📱 Mobile Deployment Checklist
+## 🚀 Deployment
 
-### Android
+### 7. Build Configuration
+- [ ] Configure EAS Build for production
+- [ ] Set up signing certificates
+- [ ] Configure app store credentials
+- [ ] Test build on real devices
 
-#### Building
-- [ ] EAS CLI installed (`npm install -g eas-cli`)
-- [ ] Logged in to Expo (`eas login`)
-- [ ] Environment variables set in Expo dashboard
-- [ ] Preview build created (`eas build --platform android --profile preview`)
-- [ ] Production build created (`eas build --platform android --profile production`)
+### 8. API & Backend
+- [ ] Deploy backend server (if separate)
+- [ ] Update API endpoints to production URLs
+- [ ] Test all API integrations
+- [ ] Set up error monitoring (Sentry, etc.)
 
-#### Google Play Store
-- [ ] Google Play Console account created
-- [ ] App store listing created
-- [ ] Screenshots uploaded
-- [ ] App description written
-- [ ] Privacy policy URL added
-- [ ] App bundle uploaded
-- [ ] App submitted for review
-
-#### Testing
-- [ ] APK/AAB installed on test device
-- [ ] All features working
-- [ ] Payment integration tested
-- [ ] Notifications working (if applicable)
-
-### iOS
-
-#### Building
-- [ ] Apple Developer account active
-- [ ] EAS CLI installed and configured
-- [ ] Environment variables set
-- [ ] Preview build created (`eas build --platform ios --profile preview`)
-- [ ] Production build created (`eas build --platform ios --profile production`)
-
-#### App Store
-- [ ] App Store Connect account set up
-- [ ] App listing created
-- [ ] Screenshots uploaded (all required sizes)
-- [ ] App description written
-- [ ] Privacy policy URL added
-- [ ] App submitted for review
-
-#### Testing
-- [ ] App installed on test device
-- [ ] All features working
-- [ ] Payment integration tested
-- [ ] Push notifications working (if applicable)
+### 9. Push Notifications
+- [ ] Configure FCM for Android
+- [ ] Configure APNs for iOS
+- [ ] Test notification delivery
 
 ---
 
-## 🔧 Backend Deployment Checklist (Optional)
+## ✅ Testing
 
-If you need PayMongo payment backend, choose one:
+### 10. Pre-Launch Testing
+- [ ] Test complete user flows (tenant, owner, barangay)
+- [ ] Test payment integration (PayMongo)
+- [ ] Test image/video uploads
+- [ ] Test on multiple devices and OS versions
+- [ ] Verify barangay approval workflow
+- [ ] Test chat/messaging functionality
+- [ ] Load test with expected user volume
 
-### Option A: Express Server on Railway/Render
-- [ ] Railway or Render account created
-- [ ] Project created and repository connected
-- [ ] Root directory set to `server`
-- [ ] Environment variables configured (PAYMONGO_SECRET_KEY, etc.)
-- [ ] Build command: `npm install`
-- [ ] Start command: `npm start`
-- [ ] Health check passing (`/health` endpoint)
-
-### Option B: Supabase Edge Functions (Advanced)
-- [ ] Supabase Functions configured
-- [ ] PayMongo routes migrated to Edge Functions
-- [ ] Functions deployed
-- [ ] Environment secrets set in Supabase
-
-### Testing
-- [ ] Health endpoint working (`GET /health`)
-- [ ] PayMongo routes accessible
-- [ ] Payment intent creation working
-- [ ] CORS configured correctly
-- [ ] Server logs accessible
+### 11. Security Testing
+- [ ] Test authentication and authorization
+- [ ] Verify RLS policies work correctly
+- [ ] Test for SQL injection vulnerabilities
+- [ ] Check for exposed API keys or secrets
+- [ ] Verify HTTPS for all connections
 
 ---
 
-## 🔐 Security Checklist
+## 📄 Documentation
 
-- [ ] All API keys are production keys (not test keys)
-- [ ] Environment variables NOT committed to git
-- [ ] `.env` files in `.gitignore`
-- [ ] CORS configured for production domains only
-- [ ] HTTPS enabled (automatic on most platforms)
-- [ ] Webhook secrets configured
-- [ ] Database connections secure
+### 12. User Documentation
+- [ ] Create user guides for tenants
+- [ ] Create user guides for owners
+- [ ] Create admin guide for barangay officials
+- [ ] Document common issues and solutions
 
----
-
-## 🔗 Integration Checklist
-
-### PayMongo Webhooks
-- [ ] Webhook endpoint created in PayMongo dashboard
-- [ ] Webhook URL: `https://your-backend-url.com/api/paymongo/webhook`
-- [ ] Webhook secret added to backend environment variables
-- [ ] Webhook events selected:
-  - [ ] `payment.succeeded`
-  - [ ] `payment.failed`
-  - [ ] `payment.pending`
-- [ ] Webhook tested
-
-### Frontend-Backend Connection
-- [ ] `EXPO_PUBLIC_API_URL` points to deployed backend
-- [ ] CORS allows frontend domain
-- [ ] API calls working from frontend
-- [ ] Error handling configured
-
-### Database
-- [ ] Supabase project is production instance
-- [ ] Database migrations applied
-- [ ] Row Level Security (RLS) policies configured
-- [ ] Database backups enabled
+### 13. Legal & Compliance
+- [ ] Prepare privacy policy
+- [ ] Prepare terms of service
+- [ ] Ensure GDPR/data protection compliance
+- [ ] Document data retention policies
 
 ---
 
-## 📊 Post-Deployment Checklist
+## 🔍 Monitoring
 
-### Monitoring
-- [ ] Error tracking set up (Sentry, etc.)
-- [ ] Analytics configured (optional)
-- [ ] Server monitoring active
-- [ ] Uptime monitoring configured
-
-### Documentation
-- [ ] Deployment URLs documented
-- [ ] Environment variables documented
-- [ ] API endpoints documented
-- [ ] Team access granted (if applicable)
-
-### Testing in Production
-- [ ] End-to-end user flow tested
-- [ ] Payment with real test transaction
-- [ ] Error scenarios tested
-- [ ] Performance checked
-- [ ] Mobile devices tested
-
-### Sharing
-- [ ] Web URL shared with team/users
-- [ ] App store links shared (if published)
-- [ ] Test builds shared (for internal testing)
-- [ ] Documentation updated
+### 14. Set Up Monitoring
+- [ ] Configure error tracking (Sentry, Bugsnag)
+- [ ] Set up analytics (Google Analytics, Mixpanel)
+- [ ] Configure performance monitoring
+- [ ] Set up uptime monitoring
+- [ ] Configure alerts for critical issues
 
 ---
 
-## 🆘 Troubleshooting Checklist
+## 📦 Post-Deployment
 
-If something isn't working:
+### 15. Launch
+- [ ] Submit to Google Play Store
+- [ ] Submit to Apple App Store
+- [ ] Set up landing page/website
+- [ ] Prepare marketing materials
 
-- [ ] Check environment variables are set correctly
-- [ ] Verify API keys are production keys
-- [ ] Check server logs for errors
-- [ ] Verify CORS settings
-- [ ] Test endpoints directly with curl/Postman
-- [ ] Check network connectivity
-- [ ] Verify SSL certificates are valid
-- [ ] Check database connection
-- [ ] Review error tracking logs
-
----
-
-## 🎉 You're Done!
-
-Once all checkboxes are complete, your app should be fully deployed and accessible to everyone!
-
-**Remember to:**
-- Monitor for errors after deployment
-- Set up backups
-- Plan for scaling if needed
-- Keep dependencies updated
-- Monitor costs
+### 16. Support
+- [ ] Set up support email/chat
+- [ ] Create FAQ section
+- [ ] Train support staff
+- [ ] Monitor user feedback and reviews
 
 ---
 
-## 📞 Need Help?
+## ⚠️ CRITICAL REMINDERS
 
-- See `SUPABASE_DEPLOYMENT.md` for detailed Supabase deployment instructions
-- See `QUICK_DEPLOY.md` for quick start guide
-- Check Supabase documentation: https://supabase.com/docs
-- Review Expo/EAS documentation: https://docs.expo.dev
+🔴 **DO NOT deploy with:**
+- Test/development credentials
+- Debug mode enabled
+- Console.log statements exposing sensitive data
+- Hardcoded API keys or secrets
+- Sample/test data in production database
 
-Happy deploying! 🚀
+🟢 **ALWAYS:**
+- Use environment variables for configuration
+- Enable HTTPS everywhere
+- Implement proper error handling
+- Log security events
+- Have a rollback plan
+- Backup production data regularly
 
+---
 
+## 🆘 Emergency Contacts
 
+**Technical Issues:**
+- Database: [Supabase Support]
+- Hosting: [Your Hosting Provider]
+- Developer: [Your Contact]
 
+**Security Issues:**
+- Security Officer: [Contact]
+- Supabase Security: security@supabase.io
+
+---
+
+## 📝 Deployment Notes
+
+**Date Deployed:**
+**Deployed By:**
+**Version:**
+**Notes:**

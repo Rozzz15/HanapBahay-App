@@ -37,7 +37,8 @@ const LoadingImage: React.FC<LoadingImageProps> = ({
 }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [fadeAnim] = useState(new Animated.Value(0));
+  // Start visible by default; we only fade in when we intentionally show a skeleton.
+  const [fadeAnim] = useState(new Animated.Value(1));
   const [skeletonAnim] = useState(new Animated.Value(0.3));
   const [optimizedSource, setOptimizedSource] = useState(source);
 
@@ -47,35 +48,56 @@ const LoadingImage: React.FC<LoadingImageProps> = ({
     // Reset states when source changes
     setLoading(true);
     setError(false);
-    fadeAnim.setValue(0);
+    // If we're showing a skeleton, start hidden and fade in when load completes.
+    // Otherwise keep the image visible to avoid "blank" images on flaky onLoad/onLoadEnd.
+    fadeAnim.setValue(showSkeleton ? 0 : 1);
 
-    // Optimize image URI if enabled and it's a URI source
-    if (enableOptimization && source && typeof source === 'object' && 'uri' in source) {
+    // Check if source is valid
+    if (!source) {
+      setError(true);
+      setLoading(false);
+      return;
+    }
+
+    // If it's a URI source, check if the URI is valid
+    if (typeof source === 'object' && 'uri' in source) {
       const uri = source.uri;
       
-      // Validate URI first - be more permissive for base64 data
-      if (!isValidImageUri(uri) && !uri.startsWith('data:image/')) {
-        console.log('❌ Invalid image URI:', uri);
+      // Check for null, undefined, or empty URI
+      if (!uri || uri === '' || uri === 'null' || uri === 'undefined') {
         setError(true);
         setLoading(false);
         return;
       }
 
-      // Start loading metrics
-      metrics.startLoading(uri);
+      // Optimize image URI if enabled
+      if (enableOptimization) {
+        // Validate URI first - be more permissive for base64 data
+        if (!isValidImageUri(uri) && !uri.startsWith('data:image/')) {
+          setError(true);
+          setLoading(false);
+          return;
+        }
 
-      // Optimize the image
-      const optimized = optimizeImageUri(uri, {
-        width: optimizationOptions.width,
-        height: optimizationOptions.height,
-        quality: optimizationOptions.quality || 0.8,
-      });
+        // Start loading metrics
+        metrics.startLoading(uri);
 
-      setOptimizedSource(optimized);
+        // Optimize the image
+        const optimized = optimizeImageUri(uri, {
+          width: optimizationOptions.width,
+          height: optimizationOptions.height,
+          quality: optimizationOptions.quality || 0.8,
+        });
+
+        setOptimizedSource(optimized);
+      } else {
+        setOptimizedSource(source);
+      }
     } else {
+      // For non-URI sources (like require()), use as-is
       setOptimizedSource(source);
     }
-  }, [source, enableOptimization, optimizationOptions.width, optimizationOptions.height, optimizationOptions.quality]);
+  }, [source, enableOptimization, optimizationOptions.width, optimizationOptions.height, optimizationOptions.quality, showSkeleton]);
 
   useEffect(() => {
     // Skeleton animation
@@ -101,14 +123,15 @@ const LoadingImage: React.FC<LoadingImageProps> = ({
   }, [loading, showSkeleton]);
 
   const handleLoad = () => {
+    // Prevent double-calls
     setLoading(false);
     setError(false);
-    
+
     // End loading metrics
     if (source && typeof source === 'object' && 'uri' in source) {
       metrics.endLoading(source.uri, true);
     }
-    
+
     // Fade in animation
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -119,15 +142,32 @@ const LoadingImage: React.FC<LoadingImageProps> = ({
     onLoad?.();
   };
 
-  const handleError = () => {
+  // Some platforms/file:// URIs can be flaky with onLoad; onLoadEnd is more reliable.
+  const handleLoadEnd = () => {
+    if (!error) {
+      setLoading(false);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 150,
+        useNativeDriver: true,
+      }).start();
+    }
+  };
+
+  const handleError = (error?: any) => {
+    // Only log if there's actually a URI to debug
+    if (source && typeof source === 'object' && 'uri' in source && source.uri) {
+      console.warn('⚠️ IMAGE LOAD ERROR:', source.uri?.substring(0, 50) + '...');
+    }
+
     setLoading(false);
     setError(true);
-    
+
     // End loading metrics
-    if (source && typeof source === 'object' && 'uri' in source) {
+    if (source && typeof source === 'object' && 'uri' in source && source.uri) {
       metrics.endLoading(source.uri, false);
     }
-    
+
     onError?.();
   };
 
@@ -187,6 +227,7 @@ const LoadingImage: React.FC<LoadingImageProps> = ({
         ]}
         resizeMode={resizeMode}
         onLoad={handleLoad}
+        onLoadEnd={handleLoadEnd}
         onError={handleError}
       />
     );

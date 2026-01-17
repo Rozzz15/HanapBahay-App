@@ -64,12 +64,14 @@ export default function PropertiesPage() {
       // Get all bookings
       const allBookings = await db.list<BookingRecord>('bookings');
       
-      // Create a map of propertyId -> bookings (only approved bookings)
+      // Create a map of propertyId -> bookings (only approved bookings with paid status)
       const bookingsMap = new Map<string, BookingRecord[]>();
       
       rawListings.forEach(listing => {
         const propertyBookings = allBookings.filter(
-          booking => booking.propertyId === listing.id && booking.status === 'approved'
+          booking => booking.propertyId === listing.id && 
+                     booking.status === 'approved' && 
+                     booking.paymentStatus === 'paid'
         );
         if (propertyBookings.length > 0) {
           bookingsMap.set(listing.id, propertyBookings);

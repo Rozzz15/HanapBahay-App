@@ -424,22 +424,25 @@ export default function EditListing() {
         try {
           const existingProfile = await db.get('owner_profiles', user.id) as any;
           if (existingProfile) {
+            // Remove 'id' field if it exists to avoid column error
+            const { id, ...profileWithoutId } = existingProfile;
+            
             await db.upsert('owner_profiles', user.id, {
-              ...existingProfile,
+              ...profileWithoutId,
               businessName: formData.businessName.trim(),
               contactNumber: formData.contactNumber,
-              email: formData.email,
-              updatedAt: now
+              email: formData.email
+              // No updatedAt - column doesn't exist in table
             });
             console.log('✅ Owner profile updated with business name:', formData.businessName);
           } else {
             // Create new owner profile if it doesn't exist
             await db.upsert('owner_profiles', user.id, {
-              userId: user.id,
+              // Don't include userId - it's the primary key (user_id) and is set automatically
               businessName: formData.businessName.trim(),
               contactNumber: formData.contactNumber,
-              email: formData.email,
-              createdAt: now
+              email: formData.email
+              // createdAt is set automatically with DEFAULT NOW()
             });
             console.log('✅ New owner profile created with business name:', formData.businessName);
           }

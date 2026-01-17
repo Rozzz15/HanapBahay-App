@@ -1,22 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { z } from 'zod';
-
-const MOCK_USERS_KEY = 'mock_users_database';
-
-// Define the user type structure to match mock-auth.ts
-interface MockUser {
-    email: string;
-    password: string;
-    id: string;
-    roles: string[];
-    role?: string;
-    barangay?: string;
-    createdAt: string;
-    updatedAt?: string;
-    name?: string;
-    phone?: string;
-    address?: string;
-}
+import { supabase } from '../../utils/supabase-client';
 
 // Schema for password change
 export const changePasswordSchema = z.object({
@@ -30,7 +13,7 @@ export const changePasswordSchema = z.object({
 
 export type ChangePasswordData = z.infer<typeof changePasswordSchema>;
 
-// Function to change password for logged-in user
+// Function to change password for logged-in user using Supabase
 export async function changePassword(
   userId: string, 
   data: ChangePasswordData
@@ -42,41 +25,34 @@ export async function changePassword(
     changePasswordSchema.parse(data);
     console.log('✅ Schema validation passed');
     
-    // Load users from storage
-    const storedUsers = await AsyncStorage.getItem(MOCK_USERS_KEY);
-    if (!storedUsers) {
+    // Get the current session to verify the user is authenticated
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError || !session) {
+      console.log('❌ No active session found');
       return {
         success: false,
-        error: 'User not found. Please contact support.'
+        error: 'Please sign in again to change your password.'
+      };
+    }
+
+    // Verify the session user matches the provided userId
+    if (session.user.id !== userId) {
+      console.log('❌ User ID mismatch');
+      return {
+        success: false,
+        error: 'Invalid user session. Please sign in again.'
       };
     }
     
-    const usersData = JSON.parse(storedUsers);
-    const mockUsers = new Map<string, MockUser>(Object.entries(usersData));
+    // Verify current password by attempting to sign in
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: session.user.email!,
+      password: data.currentPassword
+    });
     
-    // Find the user by ID
-    let foundUser: MockUser | null = null;
-    let userEmail = '';
-    
-    for (const [email, userData] of mockUsers.entries()) {
-      if (userData.id === userId) {
-        foundUser = userData;
-        userEmail = email;
-        break;
-      }
-    }
-    
-    if (!foundUser) {
-      console.log('❌ User not found in database');
-      return {
-        success: false,
-        error: 'User not found. Please contact support.'
-      };
-    }
-    
-    // Verify current password
-    if (foundUser.password !== data.currentPassword) {
-      console.log('❌ Current password is incorrect');
+    if (signInError) {
+      console.log('❌ Current password is incorrect:', signInError.message);
       return {
         success: false,
         error: 'Current password is incorrect.'
@@ -84,20 +60,25 @@ export async function changePassword(
     }
     
     // Check if new password is the same as current password
-    if (foundUser.password === data.newPassword) {
+    if (data.currentPassword === data.newPassword) {
       return {
         success: false,
         error: 'New password must be different from your current password.'
       };
     }
     
-    // Update password
-    foundUser.password = data.newPassword;
-    mockUsers.set(userEmail, foundUser);
+    // Update password using Supabase Auth
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: data.newPassword
+    });
     
-    // Save updated users
-    const usersObject = Object.fromEntries(mockUsers);
-    await AsyncStorage.setItem(MOCK_USERS_KEY, JSON.stringify(usersObject));
+    if (updateError) {
+      console.error('❌ Error updating password:', updateError);
+      return {
+        success: false,
+        error: updateError.message || 'Failed to change password. Please try again.'
+      };
+    }
     
     console.log('✅ Password changed successfully for user:', userId);
     

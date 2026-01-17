@@ -44,6 +44,11 @@ export default function ListingPropertyDetailsScreen() {
   const [videoPlayerVisible, setVideoPlayerVisible] = useState(false);
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   
+  // Debug: Log when video player visibility changes
+  useEffect(() => {
+    logger.debug('🎬 videoPlayerVisible state changed to:', videoPlayerVisible, 'currentVideoIndex:', currentVideoIndex);
+  }, [videoPlayerVisible, currentVideoIndex]);
+  
   
   // Photo scroll state
   const [currentPhotoScrollIndex, setCurrentPhotoScrollIndex] = useState(0);
@@ -971,7 +976,7 @@ const goToNextPhoto = () => {
                                 color: '#3B82F6',
                                 marginBottom: 4,
                               }}>
-                                Owner's Reply
+                                Owner&apos;s Reply
                               </Text>
                               <Text style={{
                                 fontSize: 14,
@@ -1104,9 +1109,17 @@ const goToNextPhoto = () => {
             videos={Array.isArray(propertyData.videos) ? propertyData.videos : []}
             onVideoPress={(index) => {
               if (propertyData.videos && Array.isArray(propertyData.videos)) {
-                logger.debug('Opening video at index:', index, 'Video URL:', propertyData.videos[index]);
+                logger.debug('🎥 Opening video at index:', index, 'Video URL:', propertyData.videos[index]);
                 setCurrentVideoIndex(index);
+                logger.debug('🎥 BEFORE setState - videoPlayerVisible:', videoPlayerVisible);
                 setVideoPlayerVisible(true);
+                logger.debug('🎥 AFTER setState called (async) - videoPlayerVisible:', videoPlayerVisible);
+                // Force a state check after a short delay
+                setTimeout(() => {
+                  logger.debug('🎥 DELAYED CHECK - videoPlayerVisible should be true now');
+                }, 100);
+              } else {
+                logger.debug('❌ No videos available or videos is not an array');
               }
             }}
           />
@@ -1328,13 +1341,19 @@ const goToNextPhoto = () => {
         </View>
       </Modal>
 
-      {/* Video Player */}
-      <PropertyVideoPlayer
-        videos={propertyData.videos}
-        visible={videoPlayerVisible}
-        onClose={() => setVideoPlayerVisible(false)}
-        initialIndex={currentVideoIndex}
-      />
+      {/* Video Player - Only render when needed */}
+      {propertyData.videos && propertyData.videos.length > 0 && (
+        <PropertyVideoPlayer
+          key={`video-player-${videoPlayerVisible ? 'visible' : 'hidden'}`}
+          videos={propertyData.videos}
+          visible={videoPlayerVisible}
+          onClose={() => {
+            logger.debug('🎥 Closing video player modal');
+            setVideoPlayerVisible(false);
+          }}
+          initialIndex={currentVideoIndex}
+        />
+      )}
 
       {/* Rating Modal with Comment */}
       <Modal

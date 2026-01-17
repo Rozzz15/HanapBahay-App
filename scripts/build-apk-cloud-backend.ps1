@@ -1,16 +1,31 @@
 # Build APK with Cloud Backend
 # This script ensures the APK uses the cloud backend and names it Hanapbahay.apk
 
-Write-Host "🔧 Building APK with Cloud Backend..." -ForegroundColor Cyan
+Write-Host "[BUILD] Building APK with Cloud Backend..." -ForegroundColor Cyan
 Write-Host ""
 
 # Step 1: Ensure .env has cloud backend
-Write-Host "1️⃣ Checking .env configuration..." -ForegroundColor Yellow
+Write-Host "[1/3] Checking .env configuration..." -ForegroundColor Yellow
 node scripts/ensure-cloud-backend.js
+
+# Step 1b: Verify constants file has cloud backend as default
+Write-Host ""
+Write-Host "[1/3] Verifying constants file..." -ForegroundColor Yellow
+$constantsFile = "constants\index.ts"
+if (Test-Path $constantsFile) {
+    $constantsContent = Get-Content $constantsFile -Raw
+    if ($constantsContent -match "https://web-production-e66fb\.up\.railway\.app") {
+        Write-Host "   [OK] Constants file has cloud backend URL" -ForegroundColor Green
+    } else {
+        Write-Host "   [WARNING] Constants file may not have cloud backend URL!" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "   [WARNING] Constants file not found!" -ForegroundColor Yellow
+}
 
 # Step 2: Build the APK
 Write-Host ""
-Write-Host "2️⃣ Building release APK..." -ForegroundColor Yellow
+Write-Host "[2/3] Building release APK..." -ForegroundColor Yellow
 Write-Host "   This may take 5-10 minutes..." -ForegroundColor Gray
 
 $buildOutput = ""
@@ -20,27 +35,27 @@ try {
     Pop-Location
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "   ✅ Build successful!" -ForegroundColor Green
+        Write-Host "   [SUCCESS] Build successful!" -ForegroundColor Green
     } else {
-        Write-Host "   ❌ Build failed!" -ForegroundColor Red
+        Write-Host "   [ERROR] Build failed!" -ForegroundColor Red
         Write-Host $buildOutput
         exit 1
     }
 } catch {
-    Write-Host "   ❌ Build error: $_" -ForegroundColor Red
+    Write-Host "   [ERROR] Build error: $_" -ForegroundColor Red
     Pop-Location
     exit 1
 }
 
 # Step 3: Find and rename the APK
 Write-Host ""
-Write-Host "3️⃣ Locating APK file..." -ForegroundColor Yellow
+Write-Host "[3/3] Locating APK file..." -ForegroundColor Yellow
 
 $apkPath = "android\app\build\outputs\apk\release"
 $apkFiles = Get-ChildItem -Path $apkPath -Filter "*.apk" -ErrorAction SilentlyContinue
 
 if ($apkFiles.Count -eq 0) {
-    Write-Host "   ❌ No APK file found in $apkPath" -ForegroundColor Red
+    Write-Host "   [ERROR] No APK file found in $apkPath" -ForegroundColor Red
     exit 1
 }
 
@@ -48,7 +63,7 @@ if ($apkFiles.Count -eq 0) {
 $targetApk = Join-Path $apkPath "Hanapbahay.apk"
 if (Test-Path $targetApk) {
     Remove-Item $targetApk -Force
-    Write-Host "   🗑️  Removed old Hanapbahay.apk" -ForegroundColor Gray
+    Write-Host "   [REMOVED] Removed old Hanapbahay.apk" -ForegroundColor Gray
 }
 
 # Find the release APK (usually app-release.apk)
@@ -61,15 +76,16 @@ if (-not $releaseApk) {
 if ($releaseApk) {
     $sourcePath = $releaseApk.FullName
     Copy-Item $sourcePath $targetApk -Force
-    Write-Host "   ✅ APK renamed to: Hanapbahay.apk" -ForegroundColor Green
+    Write-Host "   [SUCCESS] APK renamed to: Hanapbahay.apk" -ForegroundColor Green
     Write-Host ""
-    Write-Host "📱 APK Location:" -ForegroundColor Cyan
+    Write-Host "[APK] APK Location:" -ForegroundColor Cyan
     Write-Host "   $targetApk" -ForegroundColor White
     Write-Host ""
-    Write-Host "✅ Build complete! Your APK uses cloud backend:" -ForegroundColor Green
+    Write-Host "[SUCCESS] Build complete! Your APK uses cloud backend:" -ForegroundColor Green
     Write-Host "   https://web-production-e66fb.up.railway.app" -ForegroundColor Cyan
 } else {
-    Write-Host "   ❌ Could not find release APK" -ForegroundColor Red
+    Write-Host "   [ERROR] Could not find release APK" -ForegroundColor Red
     exit 1
 }
+
 

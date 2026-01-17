@@ -9,21 +9,22 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
-  Pressable,
   Image,
   Share,
   TextInput,
   Dimensions,
   FlatList,
+  Platform,
+  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
-import { 
-  Home, 
-  Calendar, 
-  User, 
-  MessageSquare, 
+import {
+  Home,
+  Calendar,
+  User,
+  MessageSquare,
   CreditCard,
   FileText,
   Bell,
@@ -47,10 +48,12 @@ import {
   Plus,
   Trash2,
   History,
+  Play,
 } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { getBookingsByTenant } from '../../utils/booking';
-import { BookingRecord } from '../../types';
+import { BookingRecord, PublishedListingRecord, PaymentAccount, MaintenanceRequestRecord, TenantComplaintRecord } from '../../types';
 import { sharedStyles, designTokens, iconBackgrounds } from '../../styles/owner-dashboard-styles';
 import { loadUserProfilePhoto } from '../../utils/user-profile-photos';
 import {
@@ -72,9 +75,7 @@ import {
 import { getAdvanceDepositInfo, endRentalStayWithAdvanceDeposit, getTerminationCountdownInfo } from '../../utils/advance-deposit';
 import { createOrFindConversation } from '../../utils/conversation-utils';
 import { db } from '../../utils/db';
-import { PublishedListingRecord, PaymentAccount } from '../../types';
 import BookingStatusModal from '@/components/BookingStatusModal';
-import { Platform } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
@@ -92,7 +93,6 @@ import {
   getPendingMaintenanceRequestsCount,
   cancelMaintenanceRequest,
 } from '../../utils/maintenance-requests';
-import { MaintenanceRequestRecord } from '../../types';
 import VideoPlayerModal from '../../components/video/VideoPlayerModal';
 import PayMongoPayment from '../../components/PayMongoPayment';
 import {
@@ -101,8 +101,8 @@ import {
   getStatusLabel,
   getUrgencyColor,
   createTenantComplaint,
+  deleteTenantComplaint,
 } from '../../utils/tenant-complaints';
-import { TenantComplaintRecord } from '../../types';
 
 export default function TenantMainDashboard() {
   const { user } = useAuth();
@@ -110,6 +110,19 @@ export default function TenantMainDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeBooking, setActiveBooking] = useState<BookingRecord | null>(null);
+  
+  // Helper function to get unique payments and avoid duplicates
+  // February payment might exist in BOTH rentHistory.payments AND futurePayments
+  const getUniquePayments = (payments1: RentPayment[], payments2: RentPayment[]): RentPayment[] => {
+    const allPayments = [...payments1, ...payments2];
+    const uniqueMap = new Map<string, RentPayment>();
+    allPayments.forEach(p => {
+      if (!uniqueMap.has(p.id)) {
+        uniqueMap.set(p.id, p);
+      }
+    });
+    return Array.from(uniqueMap.values());
+  };
   const [property, setProperty] = useState<PublishedListingRecord | null>(null);
   const [rentHistory, setRentHistory] = useState<RentHistorySummary | null>(null);
   const [reminders, setReminders] = useState<PaymentReminder[]>([]);
@@ -163,6 +176,9 @@ export default function TenantMainDashboard() {
   const [showComplaintHistory, setShowComplaintHistory] = useState(false);
   const [selectedComplaintForHistory, setSelectedComplaintForHistory] = useState<TenantComplaintRecord | null>(null);
   const [showComplaintDetailModal, setShowComplaintDetailModal] = useState(false);
+  const [selectedComplaintVideoIndex, setSelectedComplaintVideoIndex] = useState<number | null>(null);
+  const [selectedDocumentIndex, setSelectedDocumentIndex] = useState<number | null>(null);
+  const [complaintVideoThumbnails, setComplaintVideoThumbnails] = useState<{ [key: string]: string }>({});
   const [showComplaintModal, setShowComplaintModal] = useState(false);
   const [complaintForm, setComplaintForm] = useState({
     category: '' as TenantComplaintRecord['category'] | '',
@@ -189,7 +205,7 @@ export default function TenantMainDashboard() {
 
   const loadProfilePhoto = useCallback(async () => {
     if (!user?.id) return;
-    
+
     try {
       const { loadUserProfilePhoto } = await import('../../utils/user-profile-photos');
       const photoUri = await loadUserProfilePhoto(user.id);
@@ -236,7 +252,7 @@ export default function TenantMainDashboard() {
 
     try {
       setLoading(true);
-      
+
       // Update overdue payments (runs in background)
       try {
         const { updateOverduePayments } = await import('../../utils/tenant-payments');
@@ -256,12 +272,12 @@ export default function TenantMainDashboard() {
       } catch (err) {
         // Silently fail - countdown processing is not critical
       }
-      
+
       // Get active booking (approved and paid, or with termination countdown)
       const bookings = await getBookingsByTenant(user.id);
       const active = bookings.find(
         b => (b.status === 'approved' && b.paymentStatus === 'paid') ||
-             (b.terminationInitiatedAt && b.terminationMode === 'countdown')
+          (b.terminationInitiatedAt && b.terminationMode === 'countdown')
       );
 
       if (!active) {
@@ -310,11 +326,11 @@ export default function TenantMainDashboard() {
         const existingPayments = history.payments.filter(
           p => p.dueDate === history.nextDueDate && p.status === 'pending'
         );
-        
+
         if (existingPayments.length === 0) {
           const paymentMonth = history.nextDueDate.substring(0, 7);
           await createRentPayment(active.id, paymentMonth, history.nextDueDate);
-          
+
           // Reload history - filter by active booking
           const updatedHistory = await getRentHistorySummary(user.id, active.id);
           setRentHistory(updatedHistory);
@@ -339,25 +355,25 @@ export default function TenantMainDashboard() {
         console.error('❌ Error loading owner payment accounts:', error);
       }
 
-        // Load maintenance requests
-        try {
-          const requests = await getMaintenanceRequestsByBooking(active.id);
-          // Sort by created date (newest first)
-          requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-          setMaintenanceRequests(requests);
-          const pendingCount = await getPendingMaintenanceRequestsCount(user.id);
-          setPendingMaintenanceCount(pendingCount);
-        } catch (error) {
-          console.error('❌ Error loading maintenance requests:', error);
-        }
+      // Load maintenance requests
+      try {
+        const requests = await getMaintenanceRequestsByBooking(active.id);
+        // Sort by created date (newest first)
+        requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setMaintenanceRequests(requests);
+        const pendingCount = await getPendingMaintenanceRequestsCount(user.id);
+        setPendingMaintenanceCount(pendingCount);
+      } catch (error) {
+        console.error('❌ Error loading maintenance requests:', error);
+      }
 
-        // Load complaints
-        try {
-          const tenantComplaints = await getComplaintsByTenant(user.id);
-          setComplaints(tenantComplaints);
-        } catch (error) {
-          console.error('❌ Error loading complaints:', error);
-        }
+      // Load complaints
+      try {
+        const tenantComplaints = await getComplaintsByTenant(user.id);
+        setComplaints(tenantComplaints);
+      } catch (error) {
+        console.error('❌ Error loading complaints:', error);
+      }
 
     } catch (error) {
       console.error('❌ Error loading dashboard data:', error);
@@ -379,33 +395,33 @@ export default function TenantMainDashboard() {
     setRefreshing(true);
     loadDashboardData();
     loadProfilePhoto();
-    
+
   }, [loadDashboardData, loadProfilePhoto]);
 
   // Function to check for booking status changes
   const checkBookingStatusChanges = useCallback(async () => {
     if (!user?.id || !notificationsLoaded) return;
-    
+
     try {
       console.log('🔍 Tenant Main Dashboard: Checking for booking status changes...');
       const bookings = await getBookingsByTenant(user.id);
       console.log(`📋 Found ${bookings.length} bookings for tenant`);
-      
+
       // Check for newly approved or rejected bookings that haven't been shown yet
       for (const booking of bookings) {
         console.log(`🔑 Checking booking ${booking.id} with status ${booking.status}`);
         console.log(`📝 Already shown notifications:`, Array.from(shownBookingNotificationsRef.current));
-        
+
         // Only show modal for approved or rejected bookings that haven't been shown
-        if ((booking.status === 'approved' || booking.status === 'rejected') && 
-            !hasBookingNotificationBeenShown(
-              booking.id,
-              booking.status as 'approved' | 'rejected',
-              shownBookingNotificationsRef.current
-            )) {
-          
+        if ((booking.status === 'approved' || booking.status === 'rejected') &&
+          !hasBookingNotificationBeenShown(
+            booking.id,
+            booking.status as 'approved' | 'rejected',
+            shownBookingNotificationsRef.current
+          )) {
+
           console.log(`✅ Found new ${booking.status} booking! Showing modal for booking ${booking.id}`);
-          
+
           // Mark as shown and save to persistent storage
           shownBookingNotificationsRef.current = await markBookingNotificationAsShown(
             user.id,
@@ -413,7 +429,7 @@ export default function TenantMainDashboard() {
             booking.status as 'approved' | 'rejected',
             shownBookingNotificationsRef.current
           );
-          
+
           // Show modal after a short delay to ensure UI is ready
           setTimeout(() => {
             console.log(`🎯 Setting modal visible for booking ${booking.id}`);
@@ -423,7 +439,7 @@ export default function TenantMainDashboard() {
               status: booking.status as 'approved' | 'rejected',
             });
           }, 500);
-          
+
           break; // Only show one notification at a time
         } else {
           console.log(`⏭️ Skipping booking ${booking.id} - already shown or not approved/rejected`);
@@ -447,15 +463,15 @@ export default function TenantMainDashboard() {
     const handleBookingStatusChange = async (event?: any) => {
       const eventDetail = event?.detail || {};
       console.log('🔄 Tenant Main Dashboard: Booking status changed event received:', eventDetail);
-      
+
       if (eventDetail.bookingId && user?.id) {
         // Reload bookings to get the latest status
         const bookings = await getBookingsByTenant(user.id);
         const changedBooking = bookings.find(b => b.id === eventDetail.bookingId);
-        
+
         if (changedBooking && (changedBooking.status === 'approved' || changedBooking.status === 'rejected')) {
           console.log(`🔔 Event: Found ${changedBooking.status} booking ${changedBooking.id}`);
-          
+
           if (!hasBookingNotificationBeenShown(
             changedBooking.id,
             changedBooking.status as 'approved' | 'rejected',
@@ -469,7 +485,7 @@ export default function TenantMainDashboard() {
               shownBookingNotificationsRef.current
             );
             console.log(`✅ Event: Showing modal for booking ${changedBooking.id}`);
-            
+
             setTimeout(() => {
               setBookingStatusModal({
                 visible: true,
@@ -485,7 +501,7 @@ export default function TenantMainDashboard() {
     };
 
     const removeListener = addCustomEventListener('bookingStatusChanged', handleBookingStatusChange);
-    
+
     return () => {
       clearTimeout(timeoutId);
       removeListener();
@@ -500,7 +516,7 @@ export default function TenantMainDashboard() {
         const timeoutId = setTimeout(() => {
           checkBookingStatusChanges();
         }, 500);
-        
+
         return () => clearTimeout(timeoutId);
       }
     }, [loading, user?.id, checkBookingStatusChanges, notificationsLoaded])
@@ -554,11 +570,11 @@ export default function TenantMainDashboard() {
     setEndingRental(true);
     try {
       const result = await endRentalStayWithAdvanceDeposit(activeBooking.id, user.id, immediateLeave);
-      
+
       if (result.success) {
         // Close modal first
         setShowEndRentalModal(false);
-        
+
         if (immediateLeave) {
           Alert.alert(
             'Rental Stay Ended',
@@ -811,7 +827,12 @@ export default function TenantMainDashboard() {
       const request = await createMaintenanceRequest({
         bookingId: activeBooking.id,
         propertyId: activeBooking.propertyId,
+        propertyName: activeBooking.propertyName || activeBooking.propertyTitle || 'Property',
+        propertyAddress: activeBooking.propertyAddress || activeBooking.address,
         tenantId: user.id,
+        tenantName: user.name || 'Tenant',
+        tenantEmail: user.email,
+        tenantPhone: user.phone,
         ownerId: activeBooking.ownerId,
         title: maintenanceForm.title.trim(),
         description: maintenanceForm.description.trim(),
@@ -824,18 +845,20 @@ export default function TenantMainDashboard() {
       Alert.alert(
         'Request Submitted',
         'Your maintenance request has been submitted. The owner will be notified.',
-        [{ text: 'OK', onPress: () => {
-          setShowMaintenanceModal(false);
-          setMaintenanceForm({
-            title: '',
-            description: '',
-            category: 'other',
-            priority: 'medium',
-            photos: [],
-            videos: [],
-          });
-          loadDashboardData();
-        }}]
+        [{
+          text: 'OK', onPress: () => {
+            setShowMaintenanceModal(false);
+            setMaintenanceForm({
+              title: '',
+              description: '',
+              category: 'other',
+              priority: 'medium',
+              photos: [],
+              videos: [],
+            });
+            loadDashboardData();
+          }
+        }]
       );
     } catch (error) {
       console.error('Error submitting maintenance request:', error);
@@ -860,7 +883,7 @@ export default function TenantMainDashboard() {
             try {
               setCancellingRequest(requestId);
               const success = await cancelMaintenanceRequest(requestId, user.id);
-              
+
               if (success) {
                 Alert.alert('Cancelled', 'Your maintenance request has been cancelled.');
                 await loadDashboardData();
@@ -909,24 +932,22 @@ export default function TenantMainDashboard() {
     try {
       const cleanPhone = account.accountNumber.replace(/[^0-9]/g, '');
       const reference = activeBooking.id.slice(-8).toUpperCase();
-      
+
       // Calculate total amount from all selected payments
       // Use correct payment amount to ensure advance deposit is not applied to non-first payments
-      const selectedPaymentsList = [
-        ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-        ...futurePayments.filter(p => selectedPayments.has(p.id))
-      ];
-      
+      const allUniquePayments = getUniquePayments(rentHistory?.payments || [], futurePayments);
+      const selectedPaymentsList = allUniquePayments.filter(p => selectedPayments.has(p.id));
+
       // Get all payments for this booking to check if there are paid payments
       const allBookingPayments = [
         ...(rentHistory?.payments || []),
         ...futurePayments
       ];
-      
+
       // Calculate amount using correct payment amounts (not stored totalAmount which might be wrong)
       const amount = selectedPaymentsList.reduce((sum, p) => {
         if (!activeBooking) return sum + p.totalAmount;
-        
+
         // Get the correct amount for this payment
         const correctAmount = getCorrectPaymentAmountSync(p, activeBooking, allBookingPayments);
         const lateFee = p.lateFee || 0;
@@ -938,34 +959,34 @@ export default function TenantMainDashboard() {
         return;
       }
 
-      const methodName = account.type === 'gcash' ? 'GCash' : 
-                        account.type === 'paymaya' ? 'Maya' : 
-                        account.type === 'bank_transfer' ? 'Bank Transfer' : 'Cash';
+      const methodName = account.type === 'gcash' ? 'GCash' :
+        account.type === 'paymaya' ? 'Maya' :
+          account.type === 'bank_transfer' ? 'Bank Transfer' : 'Cash';
 
       // For GCash: Use deep link as primary method (Option 1)
       if (account.type === 'gcash') {
         const Linking = await import('expo-linking');
         const { generateGCashPaymentURL } = await import('../../utils/qr-code-generator');
         const appUrl = generateGCashPaymentURL(account, amount, reference);
-        
+
         // Primary Method: Open GCash app directly with deep link
         let appOpened = false;
         try {
           // Check if GCash app is installed and can be opened
           const canOpen = await Linking.canOpenURL(appUrl);
-          
+
           if (canOpen) {
             // Open GCash app with payment details pre-filled
             await Linking.openURL(appUrl);
             appOpened = true;
-            
+
             // Show confirmation with payment details and option to view QR code
             Alert.alert(
               'GCash Opened',
               `GCash app has been opened with your payment details:\n\n💰 Amount: ₱${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n📋 Account: ${account.accountNumber}\n📝 Reference: ${reference}\n\nComplete the payment in GCash, then tap "I Paid" below.`,
               [
-                { 
-                  text: 'View QR Code Instead', 
+                {
+                  text: 'View QR Code Instead',
                   onPress: () => {
                     if (selectedPayment) {
                       setSelectedQRCodeAccount(account);
@@ -973,12 +994,12 @@ export default function TenantMainDashboard() {
                     }
                   }
                 },
-                { 
-                  text: 'I Paid', 
+                {
+                  text: 'I Paid',
                   onPress: () => {
                     const paymentMethodName = `${methodName} - ${account.accountNumber.slice(-4)}`;
                     setSelectedPaymentMethod(paymentMethodName);
-                    
+
                     // Use unified payment handler
                     setTimeout(() => {
                       handleConfirmPayment();
@@ -988,7 +1009,7 @@ export default function TenantMainDashboard() {
                 { text: 'OK', style: 'cancel' },
               ]
             );
-            
+
             // Copy account number to clipboard as backup
             try {
               if (Platform.OS === 'web' && navigator.clipboard) {
@@ -1000,7 +1021,7 @@ export default function TenantMainDashboard() {
             } catch (e) {
               // Ignore clipboard errors
             }
-            
+
             return; // Exit early - deep link method succeeded
           }
         } catch (error) {
@@ -1009,8 +1030,7 @@ export default function TenantMainDashboard() {
 
         // Fallback: If deep link failed, show QR code modal (if available)
         const allPayments = [
-          ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-          ...futurePayments.filter(p => selectedPayments.has(p.id))
+          ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
         ];
         const firstPayment = allPayments[0];
         if (!appOpened && account.qrCodeImageUri && firstPayment) {
@@ -1018,15 +1038,15 @@ export default function TenantMainDashboard() {
             'GCash Not Available',
             'Could not open GCash app automatically.\n\nWould you like to scan a QR code instead?',
             [
-              { 
-                text: 'View QR Code', 
+              {
+                text: 'View QR Code',
                 onPress: () => {
                   setSelectedQRCodeAccount(account);
                   setShowQRCodeModal(true);
                 }
               },
-              { 
-                text: 'Manual Payment', 
+              {
+                text: 'Manual Payment',
                 onPress: () => {
                   // Show manual payment instructions
                   let accountCopied = false;
@@ -1042,23 +1062,22 @@ export default function TenantMainDashboard() {
                   } catch (e) {
                     console.warn('Could not copy to clipboard');
                   }
-                  
+
                   Alert.alert(
                     `${methodName} Payment`,
                     `${accountCopied ? '📋 Account number copied to clipboard!\n\n' : ''}Please open ${methodName} manually and send payment to:\n\n📋 Account: ${account.accountNumber}\n💰 Amount: ₱${amount.toLocaleString()}\n📝 Reference: ${reference}\n\nAfter completing payment, tap "I Paid" to record it.`,
                     [
-                      { 
-                        text: 'I Paid', 
+                      {
+                        text: 'I Paid',
                         onPress: () => {
                           const paymentMethodName = `${methodName} - ${account.accountNumber.slice(-4)}`;
                           setSelectedPaymentMethod(paymentMethodName);
-                          
+
                           if (selectedPayments.size === 1) {
                             setTimeout(async () => {
                               try {
                                 const allPayments = [
-                                  ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-                                  ...futurePayments.filter(p => selectedPayments.has(p.id))
+                                  ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
                                 ];
                                 const paymentToProcess = allPayments[0];
                                 if (paymentToProcess) {
@@ -1112,8 +1131,8 @@ export default function TenantMainDashboard() {
           `${methodName} Payment`,
           `${methodName} app could not be opened automatically.\n\n${accountCopied ? '📋 Account number is copied to your clipboard.\n\n' : ''}Please open ${methodName} manually and send payment to:\n\n📋 Account: ${account.accountNumber}\n💰 Amount: ₱${amount.toLocaleString()}\n📝 Reference: ${reference}\n\nAfter completing payment, tap "I Paid" to record it.`,
           [
-            { 
-              text: 'Copy Account Number', 
+            {
+              text: 'Copy Account Number',
               onPress: async () => {
                 try {
                   if (Platform.OS === 'web' && navigator.clipboard) {
@@ -1131,18 +1150,17 @@ export default function TenantMainDashboard() {
                 }
               }
             },
-            { 
-              text: 'I Paid', 
+            {
+              text: 'I Paid',
               onPress: () => {
                 const paymentMethodName = `${methodName} - ${account.accountNumber.slice(-4)}`;
                 setSelectedPaymentMethod(paymentMethodName);
-                
-                          if (selectedPayments.size === 1) {
+
+                if (selectedPayments.size === 1) {
                   setTimeout(async () => {
                     try {
                       const allPayments = [
-                        ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-                        ...futurePayments.filter(p => selectedPayments.has(p.id))
+                        ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
                       ];
                       const paymentToProcess = allPayments[0];
                       if (paymentToProcess) {
@@ -1169,7 +1187,7 @@ export default function TenantMainDashboard() {
         // For Maya: Try to open app first, then copy as backup
         const Linking = await import('expo-linking');
         const appUrl = `maya://pay?number=${cleanPhone}&amount=${amount}&reference=${reference}`;
-        
+
         let appOpened = false;
         try {
           const canOpen = await Linking.canOpenURL(appUrl);
@@ -1180,7 +1198,7 @@ export default function TenantMainDashboard() {
         } catch (error) {
           console.warn(`Could not open ${methodName} app:`, error);
         }
-        
+
         // Copy account number to clipboard (as backup/helper)
         let accountCopied = false;
         try {
@@ -1203,12 +1221,9 @@ export default function TenantMainDashboard() {
         if (!appOpened) {
           // App failed to open - show instructions with QR code option if available
           const alertButtons: any[] = [];
-          
+
           // Add QR code option if available
-          const allPayments = [
-            ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-            ...futurePayments.filter(p => selectedPayments.has(p.id))
-          ];
+          const allPayments = getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id));
           const firstPayment = allPayments[0];
           if (account.qrCodeImageUri && firstPayment) {
             alertButtons.push({
@@ -1219,10 +1234,10 @@ export default function TenantMainDashboard() {
               }
             });
           }
-          
+
           alertButtons.push(
-            { 
-              text: 'Copy Account Number', 
+            {
+              text: 'Copy Account Number',
               onPress: async () => {
                 try {
                   if (Platform.OS === 'web' && navigator.clipboard) {
@@ -1242,7 +1257,7 @@ export default function TenantMainDashboard() {
             },
             { text: 'OK' }
           );
-          
+
           Alert.alert(
             `${methodName} Not Available`,
             `${methodName} app is not installed or could not be opened.\n\n${accountCopied ? '📋 Account number is copied to your clipboard.\n\n' : ''}${account.qrCodeImageUri ? 'You can scan a QR code instead, or ' : ''}Please install ${methodName} from the App Store or Google Play, or use the account number manually.\n\n📋 Account: ${account.accountNumber}\n💰 Amount: ₱${amount.toLocaleString()}\n📝 Reference: ${reference}`,
@@ -1256,30 +1271,28 @@ export default function TenantMainDashboard() {
             [
               ...(() => {
                 const allPayments = [
-                  ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-                  ...futurePayments.filter(p => selectedPayments.has(p.id))
+                  ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
                 ];
                 const firstPayment = allPayments[0];
                 return account.qrCodeImageUri && firstPayment ? [{
-                text: 'View QR Code Instead',
-                onPress: () => {
-                  setSelectedQRCodeAccount(account);
-                  setShowQRCodeModal(true);
-                }
-              }] : [];
+                  text: 'View QR Code Instead',
+                  onPress: () => {
+                    setSelectedQRCodeAccount(account);
+                    setShowQRCodeModal(true);
+                  }
+                }] : [];
               })(),
-              { 
-                text: 'I Paid', 
+              {
+                text: 'I Paid',
                 onPress: () => {
                   const paymentMethodName = `${methodName} - ${account.accountNumber.slice(-4)}`;
                   setSelectedPaymentMethod(paymentMethodName);
-                  
-                          if (selectedPayments.size === 1) {
+
+                  if (selectedPayments.size === 1) {
                     setTimeout(async () => {
                       try {
                         const allPayments = [
-                          ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-                          ...futurePayments.filter(p => selectedPayments.has(p.id))
+                          ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
                         ];
                         const paymentToProcess = allPayments[0];
                         if (paymentToProcess) {
@@ -1328,53 +1341,56 @@ export default function TenantMainDashboard() {
           `${methodName} Payment`,
           `${accountCopied ? 'Account number copied to clipboard!\n\n' : ''}📋 Account: ${account.accountNumber}\n💰 Amount: ₱${amount.toLocaleString()}\n📝 Reference: ${reference}\n\nAfter completing payment, tap "I Paid" to record it.`,
           [
-            { text: 'Copy Amount', onPress: async () => {
-              try {
-                if (Platform.OS === 'web' && navigator.clipboard) {
-                  await navigator.clipboard.writeText(amount.toString());
-                } else {
-                  try {
-                    const Clipboard = await import('expo-clipboard');
-                    await Clipboard.setStringAsync(amount.toString());
-                  } catch (e) {
-                    console.warn('Failed to copy amount to clipboard:', e);
-                    Alert.alert('Amount', `₱${amount.toLocaleString()}`);
-                  }
-                }
-              } catch (e) {
-                console.error('Failed to copy amount:', e);
-                Alert.alert('Amount', `₱${amount.toLocaleString()}`);
-              }
-            }},
-            { text: 'I Paid', onPress: () => {
-              const paymentMethodName = `${methodName} - ${account.accountNumber.slice(-4)}`;
-              setSelectedPaymentMethod(paymentMethodName);
-              
-              // If this is for a single payment (not advanced), automatically confirm
-                          if (selectedPayments.size === 1) {
-                setTimeout(async () => {
-                  try {
-                    const allPayments = [
-                      ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-                      ...futurePayments.filter(p => selectedPayments.has(p.id))
-                    ];
-                    const paymentToProcess = allPayments[0];
-                    if (paymentToProcess) {
-                      const success = await markRentPaymentAsPaid(paymentToProcess.id, paymentMethodName);
-                      if (success) {
-                        Alert.alert('Success', 'Payment recorded successfully!');
-                        setShowPaymentModal(false);
-                        setSelectedPayment(null);
-                        setSelectedPaymentMethod(null);
-                        await loadDashboardData();
-                      }
+            {
+              text: 'Copy Amount', onPress: async () => {
+                try {
+                  if (Platform.OS === 'web' && navigator.clipboard) {
+                    await navigator.clipboard.writeText(amount.toString());
+                  } else {
+                    try {
+                      const Clipboard = await import('expo-clipboard');
+                      await Clipboard.setStringAsync(amount.toString());
+                    } catch (e) {
+                      console.warn('Failed to copy amount to clipboard:', e);
+                      Alert.alert('Amount', `₱${amount.toLocaleString()}`);
                     }
-                  } catch (error) {
-                    console.error('Error confirming payment:', error);
                   }
-                }, 300);
+                } catch (e) {
+                  console.error('Failed to copy amount:', e);
+                  Alert.alert('Amount', `₱${amount.toLocaleString()}`);
+                }
               }
-            }},
+            },
+            {
+              text: 'I Paid', onPress: () => {
+                const paymentMethodName = `${methodName} - ${account.accountNumber.slice(-4)}`;
+                setSelectedPaymentMethod(paymentMethodName);
+
+                // If this is for a single payment (not advanced), automatically confirm
+                if (selectedPayments.size === 1) {
+                  setTimeout(async () => {
+                    try {
+                      const allPayments = [
+                        ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
+                      ];
+                      const paymentToProcess = allPayments[0];
+                      if (paymentToProcess) {
+                        const success = await markRentPaymentAsPaid(paymentToProcess.id, paymentMethodName);
+                        if (success) {
+                          Alert.alert('Success', 'Payment recorded successfully!');
+                          setShowPaymentModal(false);
+                          setSelectedPayment(null);
+                          setSelectedPaymentMethod(null);
+                          await loadDashboardData();
+                        }
+                      }
+                    } catch (error) {
+                      console.error('Error confirming payment:', error);
+                    }
+                  }, 300);
+                }
+              }
+            },
             { text: 'Cancel', style: 'cancel' },
           ]
         );
@@ -1409,8 +1425,7 @@ export default function TenantMainDashboard() {
 
       // Get all payments (current + future) that are selected
       const allPayments = [
-        ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-        ...futurePayments.filter(p => selectedPayments.has(p.id))
+        ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
       ];
 
       for (const payment of allPayments) {
@@ -1424,7 +1439,7 @@ export default function TenantMainDashboard() {
           // Payment doesn't exist, create it
           await db.upsert('rent_payments', payment.id, payment);
         }
-        
+
         const success = await markRentPaymentAsPaid(payment.id, paymentMethodName);
         if (success) {
           successCount++;
@@ -1442,7 +1457,7 @@ export default function TenantMainDashboard() {
         setShowPaymentModal(false);
         setSelectedPayments(new Set());
         setSelectedPaymentMethod(null);
-        
+
         // Reload data
         await loadDashboardData();
       } else {
@@ -1473,7 +1488,7 @@ export default function TenantMainDashboard() {
       // Generate HTML content for PDF
       const paidDate = selectedPayment.paidDate ? new Date(selectedPayment.paidDate) : new Date();
       const dueDate = new Date(selectedPayment.dueDate);
-      
+
       const htmlContent = `
 <!DOCTYPE html>
 <html>
@@ -1686,7 +1701,7 @@ export default function TenantMainDashboard() {
           link.click();
           document.body.removeChild(link);
           setTimeout(() => URL.revokeObjectURL(url), 1000);
-          
+
           Alert.alert('Success', 'Payment receipt PDF downloaded successfully!');
         } catch (error) {
           console.error('Error downloading PDF:', error);
@@ -1719,14 +1734,14 @@ export default function TenantMainDashboard() {
       const paidPayments = rentHistory.payments.filter(p => p.status === 'paid');
       const pendingPayments = rentHistory.payments.filter(p => p.status === 'pending');
       const overduePayments = rentHistory.payments.filter(p => p.status === 'overdue');
-      
+
       // Generate HTML content for PDF
       const paymentRows = rentHistory.payments.map((payment, index) => {
         const paymentDate = payment.paidDate ? new Date(payment.paidDate) : null;
         const dueDate = new Date(payment.dueDate);
-        const statusColor = payment.status === 'paid' ? '#10B981' : 
-                           payment.status === 'overdue' ? '#EF4444' : '#F59E0B';
-        
+        const statusColor = payment.status === 'paid' ? '#10B981' :
+          payment.status === 'overdue' ? '#EF4444' : '#F59E0B';
+
         return `
         <tr style="border-bottom: 1px solid #E5E7EB;">
           <td style="padding: 10px; text-align: center;">${index + 1}</td>
@@ -2012,7 +2027,7 @@ export default function TenantMainDashboard() {
           link.click();
           document.body.removeChild(link);
           setTimeout(() => URL.revokeObjectURL(url), 1000);
-          
+
           Alert.alert('Success', 'Payment history PDF downloaded successfully!');
         } catch (error) {
           console.error('Error downloading PDF:', error);
@@ -2036,6 +2051,63 @@ export default function TenantMainDashboard() {
       Alert.alert('Error', 'Failed to download payment history PDF. Please try again.');
     }
   }, [rentHistory, activeBooking, property, user]);
+
+  const generateComplaintVideoThumbnails = async (videoUris: string[]) => {
+    const thumbnails: { [key: string]: string } = {};
+    
+    for (const videoUri of videoUris) {
+      try {
+        const { uri } = await VideoThumbnails.getThumbnailAsync(videoUri, {
+          time: 1000, // Get thumbnail at 1 second
+          quality: 0.8,
+        });
+        thumbnails[videoUri] = uri;
+      } catch (error) {
+        console.warn('Failed to generate thumbnail for complaint video:', videoUri, error);
+        // Keep using default placeholder if thumbnail generation fails
+      }
+    }
+    
+    return thumbnails;
+  };
+
+  const handleDeleteComplaint = async (complaint: TenantComplaintRecord) => {
+    // Check if complaint can be deleted (only submitted status)
+    if (complaint.status !== 'submitted') {
+      Alert.alert(
+        'Cannot Delete',
+        'You can only delete complaints that have not been processed yet. This complaint has already been received by the barangay.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Delete Complaint',
+      `Are you sure you want to delete this complaint?\n\nCategory: ${getComplaintCategoryLabel(complaint.category)}\n\nThis action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteTenantComplaint(complaint.id, user?.id || '');
+              Alert.alert('Success', 'Complaint deleted successfully');
+              
+              // Reload complaints
+              await loadComplaintsHistory();
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete complaint');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleDownloadComplaint = useCallback(async (complaint: TenantComplaintRecord) => {
     if (!user || !activeBooking || !property) return;
@@ -2073,9 +2145,9 @@ ${complaint.videos.length > 0 ? `ATTACHED VIDEOS: ${complaint.videos.length} vid
 
 ${complaint.barangayNotes ? `\nBARANGAY NOTES:\n${complaint.barangayNotes}` : ''}
 
-${complaint.settlementDocuments && complaint.settlementDocuments.length > 0 
-  ? `\nSETTLEMENT DOCUMENTS: ${complaint.settlementDocuments.length} document(s) attached` 
-  : ''}
+${complaint.settlementDocuments && complaint.settlementDocuments.length > 0
+          ? `\nSETTLEMENT DOCUMENTS: ${complaint.settlementDocuments.length} document(s) attached`
+          : ''}
 
 TIMELINE:
 ---------
@@ -2103,12 +2175,12 @@ HanapBahay Complaint System
         link.click();
         document.body.removeChild(link);
         setTimeout(() => URL.revokeObjectURL(url), 1000);
-        
+
         Alert.alert('Success', 'Complaint report downloaded successfully!');
       } else {
         // Mobile platform: Save to file system and share
         const fileUri = FileSystem.documentDirectory + filename;
-        
+
         try {
           await FileSystem.writeAsStringAsync(fileUri, complaintContent, {
             encoding: FileSystem.EncodingType.UTF8,
@@ -2178,11 +2250,11 @@ HanapBahay Complaint System
     return null; // Will redirect
   }
 
-  const nextDueDays = rentHistory?.nextDueDate 
+  const nextDueDays = rentHistory?.nextDueDate
     ? Math.ceil((new Date(rentHistory.nextDueDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  const isNextDueOverdue = rentHistory?.nextDueDate 
+  const isNextDueOverdue = rentHistory?.nextDueDate
     ? isPaymentOverdue(rentHistory.nextDueDate)
     : false;
 
@@ -2191,61 +2263,61 @@ HanapBahay Complaint System
   // Skips months that are already paid (for advance payments)
   const getNextMonthPaymentDate = () => {
     if (!activeBooking?.startDate || !rentHistory?.nextDueDate) return null;
-    
+
     // Get the day of the month from the start date (when tenant moved in)
     const startDate = new Date(activeBooking.startDate);
     const moveInDay = startDate.getDate();
-    
+
     // Get the current next due date
     const currentDueDate = new Date(rentHistory.nextDueDate);
-    
+
     // Start from 1 month after current due date
     let nextMonth = new Date(currentDueDate);
     nextMonth.setMonth(nextMonth.getMonth() + 1);
-    
+
     // Ensure it's on the same day of month as move-in date
     // Handle edge cases where the day doesn't exist in the target month (e.g., Jan 31 -> Feb 28/29)
     const lastDayOfTargetMonth = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate();
     const targetDay = Math.min(moveInDay, lastDayOfTargetMonth);
     nextMonth.setDate(targetDay);
-    
+
     // Check if this month's payment is already paid, and skip to next unpaid month
     // Limit to checking up to 12 months ahead to avoid infinite loops
     let attempts = 0;
     const maxAttempts = 12;
-    
+
     while (attempts < maxAttempts) {
       // Format the payment month as YYYY-MM
       const paymentMonth = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
-      
+
       // Check if this month's payment exists and is already paid
       const existingPayment = rentHistory?.payments?.find(
         p => p.paymentMonth === paymentMonth && p.status === 'paid'
       );
-      
+
       // If payment doesn't exist or is not paid, this is the next unpaid month
       if (!existingPayment) {
         return nextMonth;
       }
-      
+
       // Payment is already paid, skip to next month
       nextMonth.setMonth(nextMonth.getMonth() + 1);
-      
+
       // Recalculate the day of month for the new month
       const newLastDayOfMonth = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate();
       const newTargetDay = Math.min(moveInDay, newLastDayOfMonth);
       nextMonth.setDate(newTargetDay);
-      
+
       attempts++;
     }
-    
+
     // If we've checked 12 months and all are paid, return the last calculated date
     // (This shouldn't normally happen, but prevents infinite loops)
     return nextMonth;
   };
 
   const nextMonthPaymentDate = getNextMonthPaymentDate();
-  const daysUntilNextMonth = nextMonthPaymentDate 
+  const daysUntilNextMonth = nextMonthPaymentDate
     ? Math.ceil((nextMonthPaymentDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : null;
 
@@ -2315,7 +2387,7 @@ HanapBahay Complaint System
                 </View>
               )}
             </TouchableOpacity>
-            
+
             <View style={{ flex: 1, flexShrink: 1 }}>
               <Text style={{
                 fontSize: designTokens.typography.xs,
@@ -2346,10 +2418,10 @@ HanapBahay Complaint System
               onPress={handlePayRent}
               activeOpacity={0.8}
               style={{
-                backgroundColor: isNextDueOverdue 
-                  ? designTokens.colors.error 
-                  : nextDueDays <= 3 
-                    ? '#F59E0B' 
+                backgroundColor: isNextDueOverdue
+                  ? designTokens.colors.error
+                  : nextDueDays <= 3
+                    ? '#F59E0B'
                     : designTokens.colors.warning,
                 borderRadius: designTokens.borderRadius.md,
                 padding: designTokens.spacing.md,
@@ -2382,7 +2454,7 @@ HanapBahay Complaint System
                   color: '#FFFFFF',
                   marginBottom: 2,
                 }}>
-                  {isNextDueOverdue 
+                  {isNextDueOverdue
                     ? `⚠️ Payment Overdue!`
                     : nextDueDays <= 1
                       ? `🚨 Payment Due Tomorrow!`
@@ -2430,9 +2502,9 @@ HanapBahay Complaint System
                       color: '#FFFFFF',
                       marginBottom: 2,
                     }}>
-                      {isNextDueOverdue 
+                      {isNextDueOverdue
                         ? `Overdue - ${getDaysOverdue(rentHistory.nextDueDate)} days`
-                        : nextDueDays <= 7 
+                        : nextDueDays <= 7
                           ? `Due in ${nextDueDays} day${nextDueDays !== 1 ? 's' : ''}`
                           : 'Upcoming Payment'}
                     </Text>
@@ -2486,7 +2558,7 @@ HanapBahay Complaint System
                 color: designTokens.colors.textSecondary,
                 marginBottom: designTokens.spacing.sm,
               }} numberOfLines={1}>{activeBooking.propertyAddress}</Text>
-              
+
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: designTokens.spacing.xs, marginBottom: designTokens.spacing.md }}>
                 <Calendar size={14} color={designTokens.colors.textSecondary} />
                 <Text style={{
@@ -2542,7 +2614,7 @@ HanapBahay Complaint System
                     <ChevronRight size={18} color="#FFFFFF" />
                   </LinearGradient>
                 </TouchableOpacity>
-                
+
                 {/* Termination Countdown Banner */}
                 {terminationCountdown.hasCountdown && (
                   <View style={{
@@ -2689,7 +2761,7 @@ HanapBahay Complaint System
                     </View>
                   )}
                 </View>
-                
+
                 {isNextDueOverdue && (
                   <View style={{
                     flexDirection: 'row',
@@ -2712,7 +2784,7 @@ HanapBahay Complaint System
                     </Text>
                   </View>
                 )}
-                
+
                 <View style={{ flexDirection: 'row', gap: designTokens.spacing.xs, marginTop: designTokens.spacing.sm }}>
                   <TouchableOpacity
                     style={[sharedStyles.primaryButton, isNextDueOverdue && { backgroundColor: designTokens.colors.error }, { flex: 1, paddingVertical: 10 }]}
@@ -2757,7 +2829,7 @@ HanapBahay Complaint System
                 </View>
               )}
             </View>
-            
+
             <View style={{ gap: designTokens.spacing.sm }}>
               {maintenanceRequests.length > 0 ? (
                 <>
@@ -2771,13 +2843,13 @@ HanapBahay Complaint System
                       activeOpacity={0.7}
                       style={[sharedStyles.listItem, { marginBottom: 0, paddingVertical: 10 }]}
                     >
-                      <View style={[sharedStyles.listItemIcon, 
-                        request.status === 'resolved' ? iconBackgrounds.green :
+                      <View style={[sharedStyles.listItemIcon,
+                      request.status === 'resolved' ? iconBackgrounds.green :
                         request.status === 'cancelled' ? iconBackgrounds.red :
-                        request.status === 'in_progress' ? iconBackgrounds.blue :
-                        request.priority === 'urgent' ? iconBackgrounds.red :
-                        iconBackgrounds.orange,
-                        { width: 28, height: 28 }
+                          request.status === 'in_progress' ? iconBackgrounds.blue :
+                            request.priority === 'urgent' ? iconBackgrounds.red :
+                              iconBackgrounds.orange,
+                      { width: 28, height: 28 }
                       ]}>
                         {request.status === 'resolved' ? (
                           <CheckCircle size={16} color="#10B981" />
@@ -2806,12 +2878,17 @@ HanapBahay Complaint System
                         </Text>
                       </View>
                       <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                        {request.status === 'pending' && (
+                          <Text style={{ fontSize: 10, color: designTokens.colors.error, fontStyle: 'italic' }}>
+                            Hold to cancel
+                          </Text>
+                        )}
                         <Text style={{
                           fontSize: designTokens.typography.xs,
                           color: request.status === 'resolved' ? designTokens.colors.success :
-                                 request.status === 'cancelled' ? designTokens.colors.error :
-                                 request.status === 'in_progress' ? designTokens.colors.info :
-                                 designTokens.colors.warning,
+                            request.status === 'cancelled' ? designTokens.colors.error :
+                              request.status === 'in_progress' ? designTokens.colors.info :
+                                designTokens.colors.warning,
                           fontWeight: designTokens.typography.medium as any,
                           textTransform: 'capitalize',
                         }}>
@@ -2877,7 +2954,7 @@ HanapBahay Complaint System
                   No maintenance requests yet
                 </Text>
               )}
-              
+
               <View style={{ flexDirection: 'row', gap: designTokens.spacing.xs, marginTop: designTokens.spacing.xs }}>
                 {!terminationCountdown.hasCountdown && (
                   <TouchableOpacity
@@ -2939,26 +3016,32 @@ HanapBahay Complaint System
                 </View>
               )}
             </View>
-            
+
             <View style={{ gap: designTokens.spacing.sm }}>
               {complaints.length > 0 ? (
                 <>
                   {complaints.slice(0, 3).map((complaint) => (
-                    <TouchableOpacity
+                    <Pressable
                       key={complaint.id}
-                      onPress={() => {
+                      onPress={async () => {
                         setSelectedComplaintForHistory(complaint);
                         setShowComplaintDetailModal(true);
+                        
+                        // Generate video thumbnails for complaint
+                        if (complaint.videos.length > 0) {
+                          const thumbnails = await generateComplaintVideoThumbnails(complaint.videos);
+                          setComplaintVideoThumbnails(thumbnails);
+                        }
                       }}
-                      activeOpacity={0.7}
+                      onLongPress={() => handleDeleteComplaint(complaint)}
                       style={[sharedStyles.listItem, { marginBottom: 0, paddingVertical: 10 }]}
                     >
-                      <View style={[sharedStyles.listItemIcon, 
-                        complaint.status === 'resolved' ? iconBackgrounds.green :
+                      <View style={[sharedStyles.listItemIcon,
+                      complaint.status === 'resolved' ? iconBackgrounds.green :
                         complaint.status === 'closed' ? iconBackgrounds.gray :
-                        complaint.status === 'for_mediation' ? iconBackgrounds.orange :
-                        iconBackgrounds.blue,
-                        { width: 28, height: 28 }
+                          complaint.status === 'for_mediation' ? iconBackgrounds.orange :
+                            iconBackgrounds.blue,
+                      { width: 28, height: 28 }
                       ]}>
                         {complaint.status === 'resolved' ? (
                           <CheckCircle size={16} color="#10B981" />
@@ -2976,7 +3059,7 @@ HanapBahay Complaint System
                           fontWeight: designTokens.typography.semibold as any,
                           color: designTokens.colors.textPrimary,
                           marginBottom: 2,
-                        }} numberOfLines={1}>
+                        }} numberOfLines={2}>
                           {getComplaintCategoryLabel(complaint.category)}
                         </Text>
                         <Text style={{
@@ -2987,12 +3070,17 @@ HanapBahay Complaint System
                         </Text>
                       </View>
                       <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                        {complaint.status === 'submitted' && (
+                          <Text style={{ fontSize: 10, color: designTokens.colors.error, fontStyle: 'italic' }}>
+                            Hold to delete
+                          </Text>
+                        )}
                         <Text style={{
                           fontSize: designTokens.typography.xs,
                           color: complaint.status === 'resolved' ? designTokens.colors.success :
-                                 complaint.status === 'closed' ? designTokens.colors.textMuted :
-                                 complaint.status === 'for_mediation' ? designTokens.colors.warning :
-                                 designTokens.colors.info,
+                            complaint.status === 'closed' ? designTokens.colors.textMuted :
+                              complaint.status === 'for_mediation' ? designTokens.colors.warning :
+                                designTokens.colors.info,
                           fontWeight: designTokens.typography.medium as any,
                           textTransform: 'capitalize',
                         }}>
@@ -3014,7 +3102,7 @@ HanapBahay Complaint System
                           <Download size={14} color={designTokens.colors.primary} />
                         </TouchableOpacity>
                       </View>
-                    </TouchableOpacity>
+                    </Pressable>
                   ))}
                   {complaints.length > 3 && (
                     <TouchableOpacity
@@ -3045,7 +3133,7 @@ HanapBahay Complaint System
                   No complaints yet
                 </Text>
               )}
-              
+
               <View style={{ flexDirection: 'row', gap: designTokens.spacing.xs, marginTop: designTokens.spacing.xs }}>
                 {!terminationCountdown.hasCountdown && (
                   <TouchableOpacity
@@ -3110,6 +3198,7 @@ HanapBahay Complaint System
             </View>
           </View>
         )}
+
 
         {/* Compact Rent History */}
         {rentHistory && rentHistory.payments.length > 0 && (
@@ -3189,11 +3278,11 @@ HanapBahay Complaint System
                       onPress={() => payment.status === 'paid' && handleViewReceipt(payment)}
                       activeOpacity={payment.status === 'paid' ? 0.7 : 1}
                     >
-                      <View style={[sharedStyles.listItemIcon, 
-                        payment.status === 'paid' ? iconBackgrounds.green :
+                      <View style={[sharedStyles.listItemIcon,
+                      payment.status === 'paid' ? iconBackgrounds.green :
                         payment.status === 'overdue' ? iconBackgrounds.red :
-                        iconBackgrounds.orange,
-                        { width: 28, height: 28 }
+                          iconBackgrounds.orange,
+                      { width: 28, height: 28 }
                       ]}>
                         {payment.status === 'paid' ? (
                           <CheckCircle size={16} color="#10B981" />
@@ -3259,8 +3348,8 @@ HanapBahay Complaint System
                           fontSize: designTokens.typography.sm,
                           fontWeight: designTokens.typography.bold as any,
                           color: payment.status === 'paid' ? designTokens.colors.success :
-                                 payment.status === 'overdue' ? designTokens.colors.error :
-                                 designTokens.colors.textPrimary,
+                            payment.status === 'overdue' ? designTokens.colors.error :
+                              designTokens.colors.textPrimary,
                         }}>
                           ₱{(() => {
                             // For paid payments, show the actual amount paid
@@ -3273,7 +3362,7 @@ HanapBahay Complaint System
                               ...(rentHistory?.payments || []),
                               ...futurePayments
                             ];
-                            const correctAmount = activeBooking 
+                            const correctAmount = activeBooking
                               ? getCorrectPaymentAmountSync(payment, activeBooking, allPayments) + (payment.lateFee || 0)
                               : payment.totalAmount;
                             return correctAmount.toLocaleString();
@@ -3315,12 +3404,12 @@ HanapBahay Complaint System
                 <XCircle size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.advancedPaymentScrollView}>
               <Text style={styles.advancedPaymentModalDescription}>
                 Select the payment(s) you want to pay. You can pay the current due payment and future months together.
               </Text>
-              
+
               {/* Current Due Payment */}
               {rentHistory?.nextDueDate && (() => {
                 // Include rejected payments so tenant can pay them again
@@ -3328,11 +3417,11 @@ HanapBahay Complaint System
                   p => p.dueDate === rentHistory.nextDueDate && (p.status === 'pending' || p.status === 'overdue' || p.status === 'rejected')
                 );
                 if (!currentPayment) return null;
-                
+
                 const isSelected = selectedPayments.has(currentPayment.id);
                 const isOverdue = currentPayment.status === 'overdue';
                 const wasRejected = (currentPayment as any).rejectedAt;
-                
+
                 return (
                   <View style={styles.paymentSection}>
                     <Text style={styles.paymentSectionTitle}>Current Payment</Text>
@@ -3413,7 +3502,7 @@ HanapBahay Complaint System
                             ...(rentHistory?.payments || []),
                             ...futurePayments
                           ];
-                          const correctAmount = activeBooking 
+                          const correctAmount = activeBooking
                             ? getCorrectPaymentAmountSync(currentPayment, activeBooking, allPayments) + (currentPayment.lateFee || 0)
                             : currentPayment.totalAmount;
                           return correctAmount.toLocaleString();
@@ -3432,7 +3521,7 @@ HanapBahay Complaint System
                     {futurePayments.map((payment) => {
                       const isSelected = selectedPayments.has(payment.id);
                       const monthName = formatPaymentMonth(payment.paymentMonth, 'long');
-                      
+
                       return (
                         <TouchableOpacity
                           key={payment.id}
@@ -3472,7 +3561,7 @@ HanapBahay Complaint System
                                 ...(rentHistory?.payments || []),
                                 ...futurePayments
                               ];
-                              const correctAmount = activeBooking 
+                              const correctAmount = activeBooking
                                 ? getCorrectPaymentAmountSync(payment, activeBooking, allPayments) + (payment.lateFee || 0)
                                 : payment.totalAmount;
                               return correctAmount.toLocaleString();
@@ -3487,15 +3576,29 @@ HanapBahay Complaint System
 
               {/* Payment Summary */}
               {selectedPayments.size > 0 && (() => {
-                const selectedPaymentsList = [
-                  ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-                  ...futurePayments.filter(p => selectedPayments.has(p.id))
-                ];
-                // Get all payments for this booking to check if there are paid payments
-                const allBookingPayments = [
+                // CRITICAL FIX: Combine payments and remove duplicates by ID
+                // February payment might exist in BOTH rentHistory.payments AND futurePayments
+                const allPaymentsList = [
                   ...(rentHistory?.payments || []),
                   ...futurePayments
                 ];
+                
+                // Remove duplicates by keeping only unique payment IDs
+                const uniquePaymentsMap = new Map<string, RentPayment>();
+                allPaymentsList.forEach(p => {
+                  if (!uniquePaymentsMap.has(p.id)) {
+                    uniquePaymentsMap.set(p.id, p);
+                  }
+                });
+                
+                // Get only selected payments (no duplicates)
+                const selectedPaymentsList = Array.from(uniquePaymentsMap.values()).filter(p => 
+                  selectedPayments.has(p.id)
+                );
+                
+                // Get all payments for this booking to check if there are paid payments
+                const allBookingPayments = Array.from(uniquePaymentsMap.values());
+                
                 // Calculate total using correct payment amounts to ensure advance deposit is not applied to non-first payments
                 const totalAmount = selectedPaymentsList.reduce((sum, p) => {
                   if (!activeBooking) return sum + p.totalAmount;
@@ -3503,7 +3606,7 @@ HanapBahay Complaint System
                   const lateFee = p.lateFee || 0;
                   return sum + correctAmount + lateFee;
                 }, 0);
-                
+
                 return (
                   <View style={styles.advancedPaymentModalSummary}>
                     <View style={styles.advancedPaymentModalSummaryRow}>
@@ -3540,8 +3643,7 @@ HanapBahay Complaint System
                           return;
                         }
                         const allPayments = [
-                          ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-                          ...futurePayments.filter(p => selectedPayments.has(p.id))
+                          ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
                         ];
                         const paymentToUse = allPayments[0];
                         if (paymentToUse) {
@@ -3568,23 +3670,23 @@ HanapBahay Complaint System
                       <View style={styles.paymentMethodSelectedIndicator}>
                         <CheckCircle size={16} color="#10B981" />
                         <Text style={styles.paymentMethodSelectedText}>
-                          Selected - Tap "Pay" to proceed
+                          Selected - Tap &quot;Pay&quot; to proceed
                         </Text>
                       </View>
                     )}
-                    
+
                     {ownerPaymentAccounts.map((account) => {
-                      const methodName = account.type === 'gcash' ? 'GCash' : 
-                                        account.type === 'paymaya' ? 'Maya' :
-                                        account.type === 'bank_transfer' ? 'Bank Transfer' : 'Cash';
-                      const methodIcon = account.type === 'gcash' ? '📱' : 
-                                        account.type === 'paymaya' ? '💳' :
-                                        account.type === 'bank_transfer' ? '🏦' : '💵';
+                      const methodName = account.type === 'gcash' ? 'GCash' :
+                        account.type === 'paymaya' ? 'Maya' :
+                          account.type === 'bank_transfer' ? 'Bank Transfer' : 'Cash';
+                      const methodIcon = account.type === 'gcash' ? '📱' :
+                        account.type === 'paymaya' ? '💳' :
+                          account.type === 'bank_transfer' ? '🏦' : '💵';
                       const methodIconImage = account.type === 'gcash' ? require('../../assets/images/Gcash.jpg') :
-                                             account.type === 'paymaya' ? require('../../assets/images/paymaya.jpg') :
-                                             null;
+                        account.type === 'paymaya' ? require('../../assets/images/paymaya.jpg') :
+                          null;
                       const isSelected = selectedPaymentMethod === `${methodName} - ${account.accountNumber.slice(-4)}`;
-                      
+
                       return (
                         <View key={account.id}>
                           <TouchableOpacity
@@ -3597,8 +3699,8 @@ HanapBahay Complaint System
                           >
                             <View style={styles.paymentMethodLeft}>
                               {methodIconImage ? (
-                                <Image 
-                                  source={methodIconImage} 
+                                <Image
+                                  source={methodIconImage}
                                   style={styles.paymentMethodIconImage}
                                   resizeMode="cover"
                                 />
@@ -3622,7 +3724,7 @@ HanapBahay Complaint System
                             <View style={styles.paymentMethodSelectedIndicator}>
                               <CheckCircle size={16} color="#10B981" />
                               <Text style={styles.paymentMethodSelectedText}>
-                                Selected - Tap "Confirm Payment" to record
+                                Selected - Tap &quot;Confirm Payment&quot; to record
                               </Text>
                             </View>
                           )}
@@ -3657,13 +3759,13 @@ HanapBahay Complaint System
                 style={[
                   styles.modalButton,
                   styles.modalButtonConfirm,
-                  (selectedPayments.size === 0 || (ownerPaymentAccounts.length > 0 && !selectedPaymentMethod)) && styles.modalButtonDisabled
+                  selectedPayments.size === 0 && styles.modalButtonDisabled
                 ]}
                 onPress={handleConfirmPayment}
-                disabled={selectedPayments.size === 0 || (ownerPaymentAccounts.length > 0 && !selectedPaymentMethod)}
+                disabled={selectedPayments.size === 0}
               >
                 <Text style={styles.modalButtonConfirmText}>
-                  {selectedPayments.size > 0 
+                  {selectedPayments.size > 0
                     ? `Pay ${selectedPayments.size} Payment${selectedPayments.size > 1 ? 's' : ''}`
                     : 'Confirm Payment'}
                 </Text>
@@ -3694,7 +3796,7 @@ HanapBahay Complaint System
                 <XCircle size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.receiptContent}>
               <Text style={styles.receiptText}>{selectedReceipt}</Text>
             </ScrollView>
@@ -3771,11 +3873,11 @@ HanapBahay Complaint System
             </View>
 
             {/* Profile Content */}
-            <ScrollView 
+            <ScrollView
               style={{
                 flex: 1,
                 paddingHorizontal: designTokens.spacing.xl,
-              }} 
+              }}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{
                 paddingBottom: designTokens.spacing['2xl'],
@@ -3951,7 +4053,7 @@ HanapBahay Complaint System
                 </TouchableOpacity>
               )}
             </View>
-            
+
             <ScrollView style={{ maxHeight: 400 }}>
               <View style={{ padding: designTokens.spacing.md }}>
                 {terminationCountdown.hasCountdown ? (
@@ -4046,7 +4148,7 @@ HanapBahay Complaint System
                             color: designTokens.colors.textPrimary,
                             lineHeight: 20,
                           }}>
-                            {advanceDepositInfo.hasAdvanceDeposit 
+                            {advanceDepositInfo.hasAdvanceDeposit
                               ? 'You can start a countdown based on your advance deposit months, or leave immediately.'
                               : 'You can end your rental stay immediately. This action cannot be undone.'}
                           </Text>
@@ -4111,7 +4213,7 @@ HanapBahay Complaint System
                             color: designTokens.colors.textPrimary,
                             lineHeight: 20,
                           }}>
-                            Start a countdown for {advanceDepositInfo.remainingAdvanceMonths || 0} months. You'll be automatically removed when the countdown ends, but you can leave immediately anytime.
+                            Start a countdown for {advanceDepositInfo.remainingAdvanceMonths || 0} months. You&apos;ll be automatically removed when the countdown ends, but you can leave immediately anytime.
                           </Text>
                         </View>
                       </>
@@ -4229,8 +4331,7 @@ HanapBahay Complaint System
       {/* Dynamic QR Code Modal for GCash and Maya Payment */}
       {showQRCodeModal && selectedQRCodeAccount && (() => {
         const allPayments = [
-          ...(rentHistory?.payments.filter(p => selectedPayments.has(p.id)) || []),
-          ...futurePayments.filter(p => selectedPayments.has(p.id))
+          ...getUniquePayments(rentHistory?.payments || [], futurePayments).filter(p => selectedPayments.has(p.id))
         ];
         const firstPayment = allPayments[0];
         // Get all payments for this booking to check if there are paid payments
@@ -4239,341 +4340,341 @@ HanapBahay Complaint System
           ...futurePayments
         ];
         // Calculate correct amount for display
-        const correctPaymentAmount = firstPayment && activeBooking 
+        const correctPaymentAmount = firstPayment && activeBooking
           ? getCorrectPaymentAmountSync(firstPayment, activeBooking, allBookingPayments) + (firstPayment.lateFee || 0)
           : firstPayment?.totalAmount || 0;
         return firstPayment ? (
-        <Modal
-          visible={showQRCodeModal}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => {
-            setShowQRCodeModal(false);
-            setSelectedQRCodeAccount(null);
-          }}
-        >
-          <View style={styles.qrCodeModalOverlay}>
-            <View style={styles.qrCodeModalContainer}>
-              <View style={styles.qrCodeModalHeader}>
-                <Text style={styles.qrCodeModalTitle}>
-                  Scan to Pay with {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'}
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 12 }}>
-                  <TouchableOpacity
-                    style={styles.qrCodeModalShareButton}
-                    onPress={async () => {
-                      try {
-                        const { generatePaymentQRCodeString } = await import('../../utils/qr-code-generator');
-                        const qrData = generatePaymentQRCodeString(firstPayment, selectedQRCodeAccount, correctPaymentAmount);
-                        const paymentMethodName = selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya';
-                        const paymentDetails = `${paymentMethodName} Payment QR Code\n\nAmount: ₱${correctPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\nReference: ${firstPayment.receiptNumber}\nAccount: ${selectedQRCodeAccount.accountName} (${selectedQRCodeAccount.accountNumber})\nPayment Month: ${firstPayment.paymentMonth}\nDue Date: ${new Date(firstPayment.dueDate).toLocaleDateString()}\n\nScan the QR code in the app to pay.`;
-                        
-                        if (Platform.OS === 'web') {
-                          // For web, copy to clipboard
-                          if (navigator.clipboard) {
-                            await navigator.clipboard.writeText(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
-                            Alert.alert('Copied', 'Payment details copied to clipboard! You can paste and share it.');
+          <Modal
+            visible={showQRCodeModal}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={() => {
+              setShowQRCodeModal(false);
+              setSelectedQRCodeAccount(null);
+            }}
+          >
+            <View style={styles.qrCodeModalOverlay}>
+              <View style={styles.qrCodeModalContainer}>
+                <View style={styles.qrCodeModalHeader}>
+                  <Text style={styles.qrCodeModalTitle}>
+                    Scan to Pay with {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <TouchableOpacity
+                      style={styles.qrCodeModalShareButton}
+                      onPress={async () => {
+                        try {
+                          const { generatePaymentQRCodeString } = await import('../../utils/qr-code-generator');
+                          const qrData = generatePaymentQRCodeString(firstPayment, selectedQRCodeAccount, correctPaymentAmount);
+                          const paymentMethodName = selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya';
+                          const paymentDetails = `${paymentMethodName} Payment QR Code\n\nAmount: ₱${correctPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\nReference: ${firstPayment.receiptNumber}\nAccount: ${selectedQRCodeAccount.accountName} (${selectedQRCodeAccount.accountNumber})\nPayment Month: ${firstPayment.paymentMonth}\nDue Date: ${new Date(firstPayment.dueDate).toLocaleDateString()}\n\nScan the QR code in the app to pay.`;
+
+                          if (Platform.OS === 'web') {
+                            // For web, copy to clipboard
+                            if (navigator.clipboard) {
+                              await navigator.clipboard.writeText(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
+                              Alert.alert('Copied', 'Payment details copied to clipboard! You can paste and share it.');
+                            }
+                          } else {
+                            // For mobile, use React Native Share API
+                            try {
+                              await Share.share({
+                                message: `${paymentDetails}\n\nQR Code Data:\n${qrData}`,
+                                title: `${paymentMethodName} Payment QR Code`,
+                              });
+                            } catch (shareError) {
+                              // Fallback to clipboard if share fails
+                              const Clipboard = await import('expo-clipboard');
+                              await Clipboard.setStringAsync(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
+                              Alert.alert('Copied', 'Payment details copied to clipboard!');
+                            }
                           }
-                        } else {
-                          // For mobile, use React Native Share API
-                          try {
-                            await Share.share({
-                              message: `${paymentDetails}\n\nQR Code Data:\n${qrData}`,
-                              title: `${paymentMethodName} Payment QR Code`,
-                            });
-                          } catch (shareError) {
-                            // Fallback to clipboard if share fails
-                            const Clipboard = await import('expo-clipboard');
-                            await Clipboard.setStringAsync(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
-                            Alert.alert('Copied', 'Payment details copied to clipboard!');
-                          }
+                        } catch (error) {
+                          console.error('Error sharing QR code:', error);
+                          Alert.alert('Error', 'Failed to share QR code. Please try again.');
                         }
-                      } catch (error) {
-                        console.error('Error sharing QR code:', error);
-                        Alert.alert('Error', 'Failed to share QR code. Please try again.');
-                      }
+                      }}
+                    >
+                      <Share2 size={20} color="#3B82F6" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.qrCodeModalCloseButton}
+                      onPress={() => {
+                        setShowQRCodeModal(false);
+                        setSelectedQRCodeAccount(null);
+                      }}
+                    >
+                      <X size={24} color="#6B7280" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <ScrollView style={styles.qrCodeModalBody} showsVerticalScrollIndicator={false}>
+                  <View style={styles.qrCodeSection}>
+                    <Text style={styles.qrCodeLabel}>Payment QR Code</Text>
+                    <Text style={styles.qrCodeSubtitle}>
+                      Scan this QR-PH code with your {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} app{'\n'}
+                      {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} will recognize the payment details automatically{'\n'}
+                      Or share it to another device to scan
+                    </Text>
+
+                    <View style={styles.qrCodeWrapper}>
+                      <QRCode
+                        {...getQRCodeProps(firstPayment, selectedQRCodeAccount, 250, correctPaymentAmount)}
+                      />
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                      <TouchableOpacity
+                        style={[styles.qrCodeShareButton, { flex: 1, opacity: downloadingQRCode ? 0.6 : 1 }]}
+                        disabled={downloadingQRCode}
+                        onPress={async () => {
+                          if (downloadingQRCode) return; // Prevent multiple simultaneous requests
+
+                          setDownloadingQRCode(true);
+                          try {
+                            const { generateGCashQRPHCode } = await import('../../utils/qr-code-generator');
+                            // For PayMaya, use dynamic QR codes (with amount). For GCash, use static (no amount)
+                            const includeAmount = selectedQRCodeAccount.type === 'paymaya';
+                            const qrData = generateGCashQRPHCode(firstPayment, selectedQRCodeAccount, includeAmount);
+
+                            // Generate QR code image URL using a QR code API
+                            const qrCodeImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrData)}`;
+
+                            if (Platform.OS === 'web') {
+                              // For web, fetch the image and download it as a blob
+                              try {
+                                const response = await fetch(qrCodeImageUrl);
+                                const blob = await response.blob();
+                                const url = window.URL.createObjectURL(blob);
+                                const link = document.createElement('a');
+                                link.href = url;
+                                link.download = `payment-qr-code-${firstPayment.receiptNumber}.png`;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                                window.URL.revokeObjectURL(url);
+                                Alert.alert('Success', 'QR code downloaded successfully!');
+                              } catch (fetchError) {
+                                // Fallback: direct link download
+                                const link = document.createElement('a');
+                                link.href = qrCodeImageUrl;
+                                link.download = `payment-qr-code-${firstPayment.receiptNumber}.png`;
+                                link.target = '_blank';
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                                Alert.alert('Success', 'QR code download started!');
+                              }
+                            } else {
+                              // For mobile, download and save to device
+                              const FileSystem = await import('expo-file-system/legacy');
+                              const Sharing = await import('expo-sharing');
+                              const MediaLibrary = await import('expo-media-library');
+
+                              const FileSystemModule = (FileSystem as any).default || FileSystem;
+                              const SharingModule = (Sharing as any).default || Sharing;
+                              const MediaLibraryModule = (MediaLibrary as any).default || MediaLibrary;
+
+                              const fileName = `payment-qr-code-${firstPayment.receiptNumber}.png`;
+                              const fileUri = FileSystemModule.documentDirectory + fileName;
+
+                              // Download the QR code image
+                              const downloadResult = await FileSystemModule.downloadAsync(qrCodeImageUrl, fileUri);
+
+                              // Try to save to media library (Photos/Gallery) first
+                              // Only request WRITE permission, not AUDIO
+                              try {
+                                const { status } = await MediaLibraryModule.requestPermissionsAsync({
+                                  writeOnly: true, // Only request write permission for saving images
+                                });
+                                if (status === 'granted') {
+                                  const asset = await MediaLibraryModule.createAssetAsync(downloadResult.uri);
+                                  await MediaLibraryModule.createAlbumAsync('HanapBahay', asset, false);
+                                  Alert.alert('Success', 'QR code saved to your photo gallery!');
+                                  return;
+                                }
+                              } catch (mediaError) {
+                                console.log('Could not save to media library, using sharing instead:', mediaError);
+                              }
+
+                              // Fallback: Use sharing to save/download
+                              // Add a small delay to ensure previous share request is complete
+                              await new Promise(resolve => setTimeout(resolve, 300));
+
+                              if (await SharingModule.isAvailableAsync()) {
+                                try {
+                                  await SharingModule.shareAsync(downloadResult.uri, {
+                                    mimeType: 'image/png',
+                                    dialogTitle: 'Save QR Code',
+                                    UTI: 'public.png',
+                                  });
+                                } catch (shareError: any) {
+                                  // Handle "another share request is being processed" error
+                                  if (shareError?.message?.includes('Another share request')) {
+                                    // Wait a bit and retry once
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    try {
+                                      await SharingModule.shareAsync(downloadResult.uri, {
+                                        mimeType: 'image/png',
+                                        dialogTitle: 'Save QR Code',
+                                        UTI: 'public.png',
+                                      });
+                                    } catch (retryError) {
+                                      Alert.alert('Info', `QR code saved to: ${downloadResult.uri}`);
+                                    }
+                                  } else {
+                                    throw shareError;
+                                  }
+                                }
+                              } else {
+                                Alert.alert('Success', `QR code saved to: ${downloadResult.uri}`);
+                              }
+                            }
+                          } catch (error) {
+                            console.error('Error downloading QR code:', error);
+                            Alert.alert('Error', `Failed to download QR code: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                          } finally {
+                            setDownloadingQRCode(false);
+                          }
+                        }}
+                      >
+                        {downloadingQRCode ? (
+                          <ActivityIndicator size="small" color="#3B82F6" />
+                        ) : (
+                          <Download size={18} color="#3B82F6" />
+                        )}
+                        <Text style={styles.qrCodeShareButtonText}>
+                          {downloadingQRCode ? 'Downloading...' : 'Download QR Code'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.qrCodeShareButton, { flex: 1 }]}
+                        onPress={async () => {
+                          try {
+                            const { generatePaymentQRCodeString } = await import('../../utils/qr-code-generator');
+                            const qrData = generatePaymentQRCodeString(firstPayment, selectedQRCodeAccount, correctPaymentAmount);
+                            const paymentMethodName = selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya';
+                            const paymentDetails = `${paymentMethodName} Payment QR Code\n\nAmount: ₱${correctPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\nReference: ${firstPayment.receiptNumber}\nAccount: ${selectedQRCodeAccount.accountName} (${selectedQRCodeAccount.accountNumber})\nPayment Month: ${firstPayment.paymentMonth}\nDue Date: ${new Date(firstPayment.dueDate).toLocaleDateString()}\n\nScan the QR code in the app to pay.`;
+
+                            if (Platform.OS === 'web') {
+                              // For web, copy to clipboard
+                              if (navigator.clipboard) {
+                                await navigator.clipboard.writeText(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
+                                Alert.alert('Copied', 'Payment details copied to clipboard! You can paste and share it.');
+                              }
+                            } else {
+                              // For mobile, use React Native Share API
+                              try {
+                                await Share.share({
+                                  message: `${paymentDetails}\n\nQR Code Data:\n${qrData}`,
+                                  title: `${paymentMethodName} Payment QR Code`,
+                                });
+                              } catch (shareError) {
+                                // Fallback to clipboard if share fails
+                                const Clipboard = await import('expo-clipboard');
+                                await Clipboard.setStringAsync(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
+                                Alert.alert('Copied', 'Payment details copied to clipboard!');
+                              }
+                            }
+                          } catch (error) {
+                            console.error('Error sharing QR code:', error);
+                            Alert.alert('Error', 'Failed to share QR code. Please try again.');
+                          }
+                        }}
+                      >
+                        <Share2 size={18} color="#3B82F6" />
+                        <Text style={styles.qrCodeShareButtonText}>Share QR Code</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View style={styles.qrCodePaymentDetails}>
+                    <Text style={styles.qrCodeDetailsTitle}>Payment Details</Text>
+
+                    <View style={styles.qrCodeDetailRow}>
+                      <Text style={styles.qrCodeDetailLabel}>Amount:</Text>
+                      <Text style={styles.qrCodeDetailValue}>
+                        ₱{correctPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </Text>
+                    </View>
+
+                    <View style={styles.qrCodeDetailRow}>
+                      <Text style={styles.qrCodeDetailLabel}>Reference:</Text>
+                      <Text style={styles.qrCodeDetailValue}>{firstPayment.receiptNumber}</Text>
+                    </View>
+
+                    <View style={styles.qrCodeDetailRow}>
+                      <Text style={styles.qrCodeDetailLabel}>Account:</Text>
+                      <Text style={styles.qrCodeDetailValue}>
+                        {selectedQRCodeAccount.accountName} ({selectedQRCodeAccount.accountNumber})
+                      </Text>
+                    </View>
+
+                    <View style={styles.qrCodeDetailRow}>
+                      <Text style={styles.qrCodeDetailLabel}>Payment Month:</Text>
+                      <Text style={styles.qrCodeDetailValue}>{firstPayment.paymentMonth}</Text>
+                    </View>
+
+                    <View style={styles.qrCodeDetailRow}>
+                      <Text style={styles.qrCodeDetailLabel}>Due Date:</Text>
+                      <Text style={styles.qrCodeDetailValue}>
+                        {new Date(firstPayment.dueDate).toLocaleDateString()}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.qrCodeInstructions}>
+                    <Text style={styles.qrCodeInstructionsTitle}>How to Pay with QR-PH:</Text>
+                    <Text style={styles.qrCodeInstructionsText}>
+                      <Text style={{ fontWeight: '600' }}>Option 1: Scan on this device</Text>{'\n'}
+                      1. Open your {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} app{'\n'}
+                      2. Tap &quot;Scan QR&quot; or &quot;QR Code&quot;{'\n'}
+                      3. Point camera at this QR-PH code{'\n'}
+                      4. {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} will show payment details automatically{'\n'}
+                      5. Confirm amount and complete payment{'\n\n'}
+                      <Text style={{ fontWeight: '600' }}>Option 2: Share to another device</Text>{'\n'}
+                      1. Tap &quot;Share QR Code&quot; above{'\n'}
+                      2. Send to another device{'\n'}
+                      3. Open {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} and scan the QR-PH code{'\n'}
+                      4. Confirm and complete payment{'\n\n'}
+                      This QR-PH code contains all payment details. After payment, tap &quot;I Paid&quot; below to confirm.
+                    </Text>
+                  </View>
+                </ScrollView>
+
+                <View style={styles.qrCodeModalFooter}>
+                  <TouchableOpacity
+                    style={styles.qrCodeConfirmButton}
+                    onPress={async () => {
+                      const methodName = selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya';
+                      const paymentMethodName = `${methodName} - ${selectedQRCodeAccount.accountNumber.slice(-4)}`;
+                      setSelectedPaymentMethod(paymentMethodName);
+
+                      // Use unified payment handler
+                      handleConfirmPayment();
+                      setShowQRCodeModal(false);
+                      setSelectedQRCodeAccount(null);
                     }}
                   >
-                    <Share2 size={20} color="#3B82F6" />
+                    <CheckCircle size={20} color="#FFFFFF" />
+                    <Text style={styles.qrCodeConfirmButtonText}>I Paid</Text>
                   </TouchableOpacity>
+
                   <TouchableOpacity
-                    style={styles.qrCodeModalCloseButton}
+                    style={styles.qrCodeCancelButton}
                     onPress={() => {
                       setShowQRCodeModal(false);
                       setSelectedQRCodeAccount(null);
                     }}
                   >
-                    <X size={24} color="#6B7280" />
+                    <Text style={styles.qrCodeCancelButtonText}>Cancel</Text>
                   </TouchableOpacity>
                 </View>
-              </View>
-
-              <ScrollView style={styles.qrCodeModalBody} showsVerticalScrollIndicator={false}>
-                <View style={styles.qrCodeSection}>
-                  <Text style={styles.qrCodeLabel}>Payment QR Code</Text>
-                  <Text style={styles.qrCodeSubtitle}>
-                    Scan this QR-PH code with your {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} app{'\n'}
-                    {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} will recognize the payment details automatically{'\n'}
-                    Or share it to another device to scan
-                  </Text>
-                  
-                  <View style={styles.qrCodeWrapper}>
-                    <QRCode
-                      {...getQRCodeProps(firstPayment, selectedQRCodeAccount, 250, correctPaymentAmount)}
-                    />
-                  </View>
-                  
-                  <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
-                    <TouchableOpacity
-                      style={[styles.qrCodeShareButton, { flex: 1, opacity: downloadingQRCode ? 0.6 : 1 }]}
-                      disabled={downloadingQRCode}
-                      onPress={async () => {
-                        if (downloadingQRCode) return; // Prevent multiple simultaneous requests
-                        
-                        setDownloadingQRCode(true);
-                        try {
-                          const { generateGCashQRPHCode } = await import('../../utils/qr-code-generator');
-                          // For PayMaya, use dynamic QR codes (with amount). For GCash, use static (no amount)
-                          const includeAmount = selectedQRCodeAccount.type === 'paymaya';
-                          const qrData = generateGCashQRPHCode(firstPayment, selectedQRCodeAccount, includeAmount);
-                          
-                          // Generate QR code image URL using a QR code API
-                          const qrCodeImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrData)}`;
-                          
-                          if (Platform.OS === 'web') {
-                            // For web, fetch the image and download it as a blob
-                            try {
-                              const response = await fetch(qrCodeImageUrl);
-                              const blob = await response.blob();
-                              const url = window.URL.createObjectURL(blob);
-                              const link = document.createElement('a');
-                              link.href = url;
-                              link.download = `payment-qr-code-${firstPayment.receiptNumber}.png`;
-                              document.body.appendChild(link);
-                              link.click();
-                              document.body.removeChild(link);
-                              window.URL.revokeObjectURL(url);
-                              Alert.alert('Success', 'QR code downloaded successfully!');
-                            } catch (fetchError) {
-                              // Fallback: direct link download
-                              const link = document.createElement('a');
-                              link.href = qrCodeImageUrl;
-                              link.download = `payment-qr-code-${firstPayment.receiptNumber}.png`;
-                              link.target = '_blank';
-                              document.body.appendChild(link);
-                              link.click();
-                              document.body.removeChild(link);
-                              Alert.alert('Success', 'QR code download started!');
-                            }
-                          } else {
-                            // For mobile, download and save to device
-                            const FileSystem = await import('expo-file-system/legacy');
-                            const Sharing = await import('expo-sharing');
-                            const MediaLibrary = await import('expo-media-library');
-                            
-                            const FileSystemModule = (FileSystem as any).default || FileSystem;
-                            const SharingModule = (Sharing as any).default || Sharing;
-                            const MediaLibraryModule = (MediaLibrary as any).default || MediaLibrary;
-                            
-                            const fileName = `payment-qr-code-${firstPayment.receiptNumber}.png`;
-                            const fileUri = FileSystemModule.documentDirectory + fileName;
-                            
-                            // Download the QR code image
-                            const downloadResult = await FileSystemModule.downloadAsync(qrCodeImageUrl, fileUri);
-                            
-                            // Try to save to media library (Photos/Gallery) first
-                            // Only request WRITE permission, not AUDIO
-                            try {
-                              const { status } = await MediaLibraryModule.requestPermissionsAsync({
-                                writeOnly: true, // Only request write permission for saving images
-                              });
-                              if (status === 'granted') {
-                                const asset = await MediaLibraryModule.createAssetAsync(downloadResult.uri);
-                                await MediaLibraryModule.createAlbumAsync('HanapBahay', asset, false);
-                                Alert.alert('Success', 'QR code saved to your photo gallery!');
-                                return;
-                              }
-                            } catch (mediaError) {
-                              console.log('Could not save to media library, using sharing instead:', mediaError);
-                            }
-                            
-                            // Fallback: Use sharing to save/download
-                            // Add a small delay to ensure previous share request is complete
-                            await new Promise(resolve => setTimeout(resolve, 300));
-                            
-                            if (await SharingModule.isAvailableAsync()) {
-                              try {
-                                await SharingModule.shareAsync(downloadResult.uri, {
-                                  mimeType: 'image/png',
-                                  dialogTitle: 'Save QR Code',
-                                  UTI: 'public.png',
-                                });
-                              } catch (shareError: any) {
-                                // Handle "another share request is being processed" error
-                                if (shareError?.message?.includes('Another share request')) {
-                                  // Wait a bit and retry once
-                                  await new Promise(resolve => setTimeout(resolve, 500));
-                                  try {
-                                    await SharingModule.shareAsync(downloadResult.uri, {
-                                      mimeType: 'image/png',
-                                      dialogTitle: 'Save QR Code',
-                                      UTI: 'public.png',
-                                    });
-                                  } catch (retryError) {
-                                    Alert.alert('Info', `QR code saved to: ${downloadResult.uri}`);
-                                  }
-                                } else {
-                                  throw shareError;
-                                }
-                              }
-                            } else {
-                              Alert.alert('Success', `QR code saved to: ${downloadResult.uri}`);
-                            }
-                          }
-                        } catch (error) {
-                          console.error('Error downloading QR code:', error);
-                          Alert.alert('Error', `Failed to download QR code: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                        } finally {
-                          setDownloadingQRCode(false);
-                        }
-                      }}
-                    >
-                      {downloadingQRCode ? (
-                        <ActivityIndicator size="small" color="#3B82F6" />
-                      ) : (
-                        <Download size={18} color="#3B82F6" />
-                      )}
-                      <Text style={styles.qrCodeShareButtonText}>
-                        {downloadingQRCode ? 'Downloading...' : 'Download QR Code'}
-                      </Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                      style={[styles.qrCodeShareButton, { flex: 1 }]}
-                      onPress={async () => {
-                      try {
-                        const { generatePaymentQRCodeString } = await import('../../utils/qr-code-generator');
-                        const qrData = generatePaymentQRCodeString(firstPayment, selectedQRCodeAccount, correctPaymentAmount);
-                        const paymentMethodName = selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya';
-                        const paymentDetails = `${paymentMethodName} Payment QR Code\n\nAmount: ₱${correctPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\nReference: ${firstPayment.receiptNumber}\nAccount: ${selectedQRCodeAccount.accountName} (${selectedQRCodeAccount.accountNumber})\nPayment Month: ${firstPayment.paymentMonth}\nDue Date: ${new Date(firstPayment.dueDate).toLocaleDateString()}\n\nScan the QR code in the app to pay.`;
-                        
-                        if (Platform.OS === 'web') {
-                          // For web, copy to clipboard
-                          if (navigator.clipboard) {
-                            await navigator.clipboard.writeText(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
-                            Alert.alert('Copied', 'Payment details copied to clipboard! You can paste and share it.');
-                          }
-                        } else {
-                          // For mobile, use React Native Share API
-                          try {
-                            await Share.share({
-                              message: `${paymentDetails}\n\nQR Code Data:\n${qrData}`,
-                              title: `${paymentMethodName} Payment QR Code`,
-                            });
-                          } catch (shareError) {
-                            // Fallback to clipboard if share fails
-                            const Clipboard = await import('expo-clipboard');
-                            await Clipboard.setStringAsync(`${paymentDetails}\n\nQR Code Data:\n${qrData}`);
-                            Alert.alert('Copied', 'Payment details copied to clipboard!');
-                          }
-                        }
-                      } catch (error) {
-                        console.error('Error sharing QR code:', error);
-                        Alert.alert('Error', 'Failed to share QR code. Please try again.');
-                      }
-                    }}
-                  >
-                    <Share2 size={18} color="#3B82F6" />
-                    <Text style={styles.qrCodeShareButtonText}>Share QR Code</Text>
-                  </TouchableOpacity>
-                  </View>
-                </View>
-
-                <View style={styles.qrCodePaymentDetails}>
-                  <Text style={styles.qrCodeDetailsTitle}>Payment Details</Text>
-                  
-                  <View style={styles.qrCodeDetailRow}>
-                    <Text style={styles.qrCodeDetailLabel}>Amount:</Text>
-                    <Text style={styles.qrCodeDetailValue}>
-                      ₱{correctPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </Text>
-                  </View>
-
-                  <View style={styles.qrCodeDetailRow}>
-                    <Text style={styles.qrCodeDetailLabel}>Reference:</Text>
-                    <Text style={styles.qrCodeDetailValue}>{firstPayment.receiptNumber}</Text>
-                  </View>
-
-                  <View style={styles.qrCodeDetailRow}>
-                    <Text style={styles.qrCodeDetailLabel}>Account:</Text>
-                    <Text style={styles.qrCodeDetailValue}>
-                      {selectedQRCodeAccount.accountName} ({selectedQRCodeAccount.accountNumber})
-                    </Text>
-                  </View>
-
-                  <View style={styles.qrCodeDetailRow}>
-                    <Text style={styles.qrCodeDetailLabel}>Payment Month:</Text>
-                    <Text style={styles.qrCodeDetailValue}>{firstPayment.paymentMonth}</Text>
-                  </View>
-
-                  <View style={styles.qrCodeDetailRow}>
-                    <Text style={styles.qrCodeDetailLabel}>Due Date:</Text>
-                    <Text style={styles.qrCodeDetailValue}>
-                      {new Date(firstPayment.dueDate).toLocaleDateString()}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.qrCodeInstructions}>
-                  <Text style={styles.qrCodeInstructionsTitle}>How to Pay with QR-PH:</Text>
-                  <Text style={styles.qrCodeInstructionsText}>
-                    <Text style={{ fontWeight: '600' }}>Option 1: Scan on this device</Text>{'\n'}
-                    1. Open your {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} app{'\n'}
-                    2. Tap "Scan QR" or "QR Code"{'\n'}
-                    3. Point camera at this QR-PH code{'\n'}
-                    4. {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} will show payment details automatically{'\n'}
-                    5. Confirm amount and complete payment{'\n\n'}
-                    <Text style={{ fontWeight: '600' }}>Option 2: Share to another device</Text>{'\n'}
-                    1. Tap "Share QR Code" above{'\n'}
-                    2. Send to another device{'\n'}
-                    3. Open {selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya'} and scan the QR-PH code{'\n'}
-                    4. Confirm and complete payment{'\n\n'}
-                    This QR-PH code contains all payment details. After payment, tap "I Paid" below to confirm.
-                  </Text>
-                </View>
-              </ScrollView>
-
-              <View style={styles.qrCodeModalFooter}>
-                <TouchableOpacity
-                  style={styles.qrCodeConfirmButton}
-                  onPress={async () => {
-                    const methodName = selectedQRCodeAccount.type === 'gcash' ? 'GCash' : 'Maya';
-                    const paymentMethodName = `${methodName} - ${selectedQRCodeAccount.accountNumber.slice(-4)}`;
-                    setSelectedPaymentMethod(paymentMethodName);
-                    
-                    // Use unified payment handler
-                    handleConfirmPayment();
-                    setShowQRCodeModal(false);
-                    setSelectedQRCodeAccount(null);
-                  }}
-                >
-                  <CheckCircle size={20} color="#FFFFFF" />
-                  <Text style={styles.qrCodeConfirmButtonText}>I Paid</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.qrCodeCancelButton}
-                  onPress={() => {
-                    setShowQRCodeModal(false);
-                    setSelectedQRCodeAccount(null);
-                  }}
-                >
-                  <Text style={styles.qrCodeCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
               </View>
             </View>
-          </View>
-        </Modal>
+          </Modal>
         ) : null;
       })()}
 
@@ -4611,7 +4712,7 @@ HanapBahay Complaint System
                 <X size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               <View style={{ gap: designTokens.spacing.md }}>
                 {/* Title */}
@@ -4671,11 +4772,11 @@ HanapBahay Complaint System
                     {(['low', 'medium', 'high', 'urgent'] as const).map((pri) => {
                       const priorityStyle = maintenanceForm.priority === pri ? (
                         pri === 'low' ? styles.priorityButtonLow :
-                        pri === 'medium' ? styles.priorityButtonMedium :
-                        pri === 'high' ? styles.priorityButtonHigh :
-                        styles.priorityButtonUrgent
+                          pri === 'medium' ? styles.priorityButtonMedium :
+                            pri === 'high' ? styles.priorityButtonHigh :
+                              styles.priorityButtonUrgent
                       ) : null;
-                      
+
                       return (
                         <TouchableOpacity
                           key={pri}
@@ -4690,9 +4791,9 @@ HanapBahay Complaint System
                             maintenanceForm.priority === pri && styles.priorityButtonTextSelected,
                             priorityStyle && {
                               color: pri === 'low' ? '#10B981' :
-                                     pri === 'medium' ? '#F59E0B' :
-                                     pri === 'high' ? '#EF4444' :
-                                     '#DC2626'
+                                pri === 'medium' ? '#F59E0B' :
+                                  pri === 'high' ? '#EF4444' :
+                                    '#DC2626'
                             }
                           ]}>
                             {pri}
@@ -4807,7 +4908,7 @@ HanapBahay Complaint System
                 <X size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               {maintenanceRequests.length === 0 ? (
                 <View style={{ alignItems: 'center', paddingVertical: designTokens.spacing['2xl'] }}>
@@ -4838,10 +4939,10 @@ HanapBahay Complaint System
                           borderLeftWidth: 4,
                           borderLeftColor:
                             request.status === 'resolved' ? designTokens.colors.success :
-                            request.status === 'cancelled' ? designTokens.colors.error :
-                            request.status === 'in_progress' ? designTokens.colors.info :
-                            request.priority === 'urgent' ? designTokens.colors.error :
-                            designTokens.colors.warning,
+                              request.status === 'cancelled' ? designTokens.colors.error :
+                                request.status === 'in_progress' ? designTokens.colors.info :
+                                  request.priority === 'urgent' ? designTokens.colors.error :
+                                    designTokens.colors.warning,
                         }
                       ]}
                     >
@@ -4849,10 +4950,10 @@ HanapBahay Complaint System
                         <View style={[
                           sharedStyles.statIcon,
                           request.status === 'resolved' ? iconBackgrounds.green :
-                          request.status === 'cancelled' ? iconBackgrounds.red :
-                          request.status === 'in_progress' ? iconBackgrounds.blue :
-                          request.priority === 'urgent' ? iconBackgrounds.red :
-                          iconBackgrounds.orange,
+                            request.status === 'cancelled' ? iconBackgrounds.red :
+                              request.status === 'in_progress' ? iconBackgrounds.blue :
+                                request.priority === 'urgent' ? iconBackgrounds.red :
+                                  iconBackgrounds.orange,
                           { width: 40, height: 40 }
                         ]}>
                           {request.status === 'resolved' ? (
@@ -4873,18 +4974,18 @@ HanapBahay Complaint System
                             <View style={[
                               sharedStyles.statusBadge,
                               request.status === 'resolved' ? { backgroundColor: designTokens.colors.successLight } :
-                              request.status === 'cancelled' ? { backgroundColor: designTokens.colors.errorLight } :
-                              request.status === 'in_progress' ? { backgroundColor: designTokens.colors.infoLight } :
-                              request.priority === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
-                              { backgroundColor: designTokens.colors.warningLight }
+                                request.status === 'cancelled' ? { backgroundColor: designTokens.colors.errorLight } :
+                                  request.status === 'in_progress' ? { backgroundColor: designTokens.colors.infoLight } :
+                                    request.priority === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
+                                      { backgroundColor: designTokens.colors.warningLight }
                             ]}>
                               <Text style={[
                                 sharedStyles.statusText,
                                 request.status === 'resolved' ? { color: designTokens.colors.success } :
-                                request.status === 'cancelled' ? { color: designTokens.colors.error } :
-                                request.status === 'in_progress' ? { color: designTokens.colors.info } :
-                                request.priority === 'urgent' ? { color: designTokens.colors.error } :
-                                { color: designTokens.colors.warning }
+                                  request.status === 'cancelled' ? { color: designTokens.colors.error } :
+                                    request.status === 'in_progress' ? { color: designTokens.colors.info } :
+                                      request.priority === 'urgent' ? { color: designTokens.colors.error } :
+                                        { color: designTokens.colors.warning }
                               ]}>
                                 {request.status.replace('_', ' ')}
                               </Text>
@@ -5038,18 +5139,18 @@ HanapBahay Complaint System
                       <View style={[
                         sharedStyles.statusBadge,
                         selectedMaintenanceRequest.status === 'resolved' ? { backgroundColor: designTokens.colors.successLight } :
-                        selectedMaintenanceRequest.status === 'cancelled' ? { backgroundColor: designTokens.colors.errorLight } :
-                        selectedMaintenanceRequest.status === 'in_progress' ? { backgroundColor: designTokens.colors.infoLight } :
-                        selectedMaintenanceRequest.priority === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
-                        { backgroundColor: designTokens.colors.warningLight }
+                          selectedMaintenanceRequest.status === 'cancelled' ? { backgroundColor: designTokens.colors.errorLight } :
+                            selectedMaintenanceRequest.status === 'in_progress' ? { backgroundColor: designTokens.colors.infoLight } :
+                              selectedMaintenanceRequest.priority === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
+                                { backgroundColor: designTokens.colors.warningLight }
                       ]}>
                         <Text style={[
                           sharedStyles.statusText,
                           selectedMaintenanceRequest.status === 'resolved' ? { color: designTokens.colors.success } :
-                          selectedMaintenanceRequest.status === 'cancelled' ? { color: designTokens.colors.error } :
-                          selectedMaintenanceRequest.status === 'in_progress' ? { color: designTokens.colors.info } :
-                          selectedMaintenanceRequest.priority === 'urgent' ? { color: designTokens.colors.error } :
-                          { color: designTokens.colors.warning }
+                            selectedMaintenanceRequest.status === 'cancelled' ? { color: designTokens.colors.error } :
+                              selectedMaintenanceRequest.status === 'in_progress' ? { color: designTokens.colors.info } :
+                                selectedMaintenanceRequest.priority === 'urgent' ? { color: designTokens.colors.error } :
+                                  { color: designTokens.colors.warning }
                         ]}>
                           {selectedMaintenanceRequest.status.replace('_', ' ')}
                         </Text>
@@ -5171,8 +5272,8 @@ HanapBahay Complaint System
                           </View>
                         ) : (
                           <View>
-                            <ScrollView 
-                              horizontal 
+                            <ScrollView
+                              horizontal
                               showsHorizontalScrollIndicator={true}
                               contentContainerStyle={{ paddingRight: designTokens.spacing.md }}
                               style={{ marginTop: designTokens.spacing.xs }}
@@ -5411,7 +5512,7 @@ HanapBahay Complaint System
                 <X size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               <View style={{ gap: designTokens.spacing.md }}>
                 {/* Complaint Category */}
@@ -5491,11 +5592,11 @@ HanapBahay Complaint System
                     {(['low', 'medium', 'high', 'urgent'] as TenantComplaintRecord['urgency'][]).map((urgency) => {
                       const urgencyStyle = complaintForm.urgency === urgency ? (
                         urgency === 'low' ? styles.priorityButtonLow :
-                        urgency === 'medium' ? styles.priorityButtonMedium :
-                        urgency === 'high' ? styles.priorityButtonHigh :
-                        styles.priorityButtonUrgent
+                          urgency === 'medium' ? styles.priorityButtonMedium :
+                            urgency === 'high' ? styles.priorityButtonHigh :
+                              styles.priorityButtonUrgent
                       ) : null;
-                      
+
                       return (
                         <TouchableOpacity
                           key={urgency}
@@ -5510,9 +5611,9 @@ HanapBahay Complaint System
                             complaintForm.urgency === urgency && styles.priorityButtonTextSelected,
                             urgencyStyle && {
                               color: urgency === 'low' ? '#10B981' :
-                                     urgency === 'medium' ? '#F59E0B' :
-                                     urgency === 'high' ? '#EF4444' :
-                                     '#DC2626'
+                                urgency === 'medium' ? '#F59E0B' :
+                                  urgency === 'high' ? '#EF4444' :
+                                    '#DC2626'
                             }
                           ]}>
                             {urgency.charAt(0).toUpperCase() + urgency.slice(1)}
@@ -5672,7 +5773,7 @@ HanapBahay Complaint System
                 <X size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               {complaints.length === 0 ? (
                 <View style={{ alignItems: 'center', paddingVertical: designTokens.spacing['2xl'] }}>
@@ -5688,14 +5789,20 @@ HanapBahay Complaint System
               ) : (
                 <View style={{ gap: designTokens.spacing.md }}>
                   {complaints.map((complaint) => (
-                    <TouchableOpacity
+                    <Pressable
                       key={complaint.id}
-                      onPress={() => {
+                      onPress={async () => {
                         setSelectedComplaintForHistory(complaint);
                         setShowComplaintDetailModal(true);
                         setShowComplaintHistory(false);
+                        
+                        // Generate video thumbnails for complaint
+                        if (complaint.videos.length > 0) {
+                          const thumbnails = await generateComplaintVideoThumbnails(complaint.videos);
+                          setComplaintVideoThumbnails(thumbnails);
+                        }
                       }}
-                      activeOpacity={0.7}
+                      onLongPress={() => handleDeleteComplaint(complaint)}
                       style={[
                         sharedStyles.card,
                         {
@@ -5703,10 +5810,10 @@ HanapBahay Complaint System
                           borderLeftWidth: 4,
                           borderLeftColor:
                             complaint.status === 'resolved' ? designTokens.colors.success :
-                            complaint.status === 'closed' ? designTokens.colors.textMuted :
-                            complaint.status === 'for_mediation' ? designTokens.colors.warning :
-                            complaint.urgency === 'urgent' ? designTokens.colors.error :
-                            designTokens.colors.info,
+                              complaint.status === 'closed' ? designTokens.colors.textMuted :
+                                complaint.status === 'for_mediation' ? designTokens.colors.warning :
+                                  complaint.urgency === 'urgent' ? designTokens.colors.error :
+                                    designTokens.colors.info,
                         }
                       ]}
                     >
@@ -5714,10 +5821,10 @@ HanapBahay Complaint System
                         <View style={[
                           sharedStyles.statIcon,
                           complaint.status === 'resolved' ? iconBackgrounds.green :
-                          complaint.status === 'closed' ? iconBackgrounds.gray :
-                          complaint.status === 'for_mediation' ? iconBackgrounds.orange :
-                          complaint.urgency === 'urgent' ? iconBackgrounds.red :
-                          iconBackgrounds.blue,
+                            complaint.status === 'closed' ? iconBackgrounds.gray :
+                              complaint.status === 'for_mediation' ? iconBackgrounds.orange :
+                                complaint.urgency === 'urgent' ? iconBackgrounds.red :
+                                  iconBackgrounds.blue,
                           { width: 40, height: 40 }
                         ]}>
                           {complaint.status === 'resolved' ? (
@@ -5732,24 +5839,24 @@ HanapBahay Complaint System
                         </View>
                         <View style={{ flex: 1 }}>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: designTokens.spacing.xs }}>
-                            <Text style={[sharedStyles.statLabel, { fontSize: designTokens.typography.base, marginBottom: 0 }]} numberOfLines={2}>
+                            <Text style={[sharedStyles.statLabel, { fontSize: designTokens.typography.base, marginBottom: 0, flex: 1, marginRight: designTokens.spacing.sm }]} numberOfLines={2}>
                               {getComplaintCategoryLabel(complaint.category)}
                             </Text>
                             <View style={[
                               sharedStyles.statusBadge,
                               complaint.status === 'resolved' ? { backgroundColor: designTokens.colors.successLight } :
-                              complaint.status === 'closed' ? { backgroundColor: designTokens.colors.textMuted + '20' } :
-                              complaint.status === 'for_mediation' ? { backgroundColor: designTokens.colors.warningLight } :
-                              complaint.urgency === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
-                              { backgroundColor: designTokens.colors.infoLight }
+                                complaint.status === 'closed' ? { backgroundColor: designTokens.colors.textMuted + '20' } :
+                                  complaint.status === 'for_mediation' ? { backgroundColor: designTokens.colors.warningLight } :
+                                    complaint.urgency === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
+                                      { backgroundColor: designTokens.colors.infoLight }
                             ]}>
                               <Text style={[
                                 sharedStyles.statusText,
                                 complaint.status === 'resolved' ? { color: designTokens.colors.success } :
-                                complaint.status === 'closed' ? { color: designTokens.colors.textMuted } :
-                                complaint.status === 'for_mediation' ? { color: designTokens.colors.warning } :
-                                complaint.urgency === 'urgent' ? { color: designTokens.colors.error } :
-                                { color: designTokens.colors.info }
+                                  complaint.status === 'closed' ? { color: designTokens.colors.textMuted } :
+                                    complaint.status === 'for_mediation' ? { color: designTokens.colors.warning } :
+                                      complaint.urgency === 'urgent' ? { color: designTokens.colors.error } :
+                                        { color: designTokens.colors.info }
                               ]}>
                                 {getStatusLabel(complaint.status)}
                               </Text>
@@ -5833,7 +5940,7 @@ HanapBahay Complaint System
                           </TouchableOpacity>
                         </View>
                       </View>
-                    </TouchableOpacity>
+                    </Pressable>
                   ))}
                 </View>
               )}
@@ -5900,18 +6007,18 @@ HanapBahay Complaint System
                       <View style={[
                         sharedStyles.statusBadge,
                         selectedComplaintForHistory.status === 'resolved' ? { backgroundColor: designTokens.colors.successLight } :
-                        selectedComplaintForHistory.status === 'closed' ? { backgroundColor: designTokens.colors.textMuted + '20' } :
-                        selectedComplaintForHistory.status === 'for_mediation' ? { backgroundColor: designTokens.colors.warningLight } :
-                        selectedComplaintForHistory.urgency === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
-                        { backgroundColor: designTokens.colors.infoLight }
+                          selectedComplaintForHistory.status === 'closed' ? { backgroundColor: designTokens.colors.textMuted + '20' } :
+                            selectedComplaintForHistory.status === 'for_mediation' ? { backgroundColor: designTokens.colors.warningLight } :
+                              selectedComplaintForHistory.urgency === 'urgent' ? { backgroundColor: designTokens.colors.errorLight } :
+                                { backgroundColor: designTokens.colors.infoLight }
                       ]}>
                         <Text style={[
                           sharedStyles.statusText,
                           selectedComplaintForHistory.status === 'resolved' ? { color: designTokens.colors.success } :
-                          selectedComplaintForHistory.status === 'closed' ? { color: designTokens.colors.textMuted } :
-                          selectedComplaintForHistory.status === 'for_mediation' ? { color: designTokens.colors.warning } :
-                          selectedComplaintForHistory.urgency === 'urgent' ? { color: designTokens.colors.error } :
-                          { color: designTokens.colors.info }
+                            selectedComplaintForHistory.status === 'closed' ? { color: designTokens.colors.textMuted } :
+                              selectedComplaintForHistory.status === 'for_mediation' ? { color: designTokens.colors.warning } :
+                                selectedComplaintForHistory.urgency === 'urgent' ? { color: designTokens.colors.error } :
+                                  { color: designTokens.colors.info }
                         ]}>
                           {getStatusLabel(selectedComplaintForHistory.status)}
                         </Text>
@@ -5966,6 +6073,8 @@ HanapBahay Complaint System
                         fontSize: designTokens.typography.base,
                         color: designTokens.colors.textPrimary,
                         lineHeight: 22,
+                        flexWrap: 'wrap',
+                        flexShrink: 1,
                       }}>
                         {selectedComplaintForHistory.description}
                       </Text>
@@ -6032,8 +6141,8 @@ HanapBahay Complaint System
                             />
                           </TouchableOpacity>
                         ) : (
-                          <ScrollView 
-                            horizontal 
+                          <ScrollView
+                            horizontal
                             showsHorizontalScrollIndicator={true}
                             contentContainerStyle={{ paddingRight: designTokens.spacing.md }}
                             style={{ marginTop: designTokens.spacing.xs }}
@@ -6070,48 +6179,148 @@ HanapBahay Complaint System
                       </View>
                     )}
 
-                    {/* Videos */}
+                    {/* Videos - Modern Style */}
                     {selectedComplaintForHistory.videos.length > 0 && (
-                      <View>
+                      <View style={{ marginTop: designTokens.spacing.md }}>
                         <Text style={{
-                          fontSize: designTokens.typography.sm,
-                          fontWeight: designTokens.typography.semibold as any,
-                          color: designTokens.colors.textSecondary,
-                          marginBottom: designTokens.spacing.md,
-                          textTransform: 'uppercase',
-                          letterSpacing: 0.5,
-                        }}>
-                          Videos ({selectedComplaintForHistory.videos.length})
-                        </Text>
-                        <Text style={{
-                          fontSize: designTokens.typography.base,
-                          color: designTokens.colors.textSecondary,
-                        }}>
-                          {selectedComplaintForHistory.videos.length} video{selectedComplaintForHistory.videos.length > 1 ? 's' : ''} attached
-                        </Text>
-                      </View>
-                    )}
-
-                    {/* Barangay Notes */}
-                    {selectedComplaintForHistory.barangayNotes && (
-                      <View>
-                        <Text style={{
-                          fontSize: designTokens.typography.sm,
-                          fontWeight: designTokens.typography.semibold as any,
+                          fontSize: 13,
+                          fontWeight: '600',
                           color: designTokens.colors.textSecondary,
                           marginBottom: designTokens.spacing.sm,
                           textTransform: 'uppercase',
                           letterSpacing: 0.5,
                         }}>
-                          Barangay Notes
+                          Videos ({selectedComplaintForHistory.videos.length})
                         </Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                          {selectedComplaintForHistory.videos.map((video, index) => {
+                            const thumbnailUri = complaintVideoThumbnails[video];
+                            return (
+                              <TouchableOpacity
+                                key={index}
+                                style={{
+                                  width: 160,
+                                  height: 160,
+                                  borderRadius: designTokens.borderRadius.lg,
+                                  overflow: 'hidden',
+                                  backgroundColor: '#000000',
+                                  marginRight: designTokens.spacing.sm,
+                                  position: 'relative',
+                                }}
+                                onPress={() => setSelectedComplaintVideoIndex(index)}
+                                activeOpacity={0.8}
+                              >
+                                {/* Video Thumbnail or Loading */}
+                                {thumbnailUri ? (
+                                  <Image
+                                    source={{ uri: thumbnailUri }}
+                                    style={{ width: '100%', height: '100%' }}
+                                    resizeMode="cover"
+                                  />
+                                ) : (
+                                  <View style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                  }}>
+                                    <ActivityIndicator size="small" color="#FFFFFF" />
+                                  </View>
+                                )}
+                                {/* Dark gradient overlay */}
+                                <LinearGradient
+                                  colors={['transparent', 'rgba(0, 0, 0, 0.8)']}
+                                  style={{
+                                    position: 'absolute',
+                                    bottom: 0,
+                                    left: 0,
+                                    right: 0,
+                                    height: '50%',
+                                  }}
+                                />
+                                {/* Play button */}
+                                <View style={{
+                                  position: 'absolute',
+                                  top: '50%',
+                                  left: '50%',
+                                  transform: [{ translateX: -20 }, { translateY: -20 }],
+                                  width: 40,
+                                  height: 40,
+                                  borderRadius: 20,
+                                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                                  justifyContent: 'center',
+                                  alignItems: 'center',
+                                  shadowColor: '#000',
+                                  shadowOffset: { width: 0, height: 2 },
+                                  shadowOpacity: 0.3,
+                                  shadowRadius: 4,
+                                  elevation: 5,
+                                }}>
+                                  <Play size={20} color="#000000" fill="#000000" style={{ marginLeft: 2 }} />
+                                </View>
+                                {/* Video label */}
+                                <View style={{
+                                  position: 'absolute',
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  padding: designTokens.spacing.sm,
+                                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                                }}>
+                                  <Text style={{
+                                    color: '#FFFFFF',
+                                    fontSize: 13,
+                                    fontWeight: '600',
+                                    textAlign: 'center',
+                                  }}>Video {index + 1}</Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                    )}
+
+                    {/* Barangay Notes - Modern Style */}
+                    {selectedComplaintForHistory.barangayNotes && (
+                      <View style={{
+                        marginTop: designTokens.spacing.lg,
+                        backgroundColor: '#F8FAFC',
+                        padding: designTokens.spacing.md,
+                        borderRadius: designTokens.borderRadius.lg,
+                        borderWidth: 1,
+                        borderColor: '#E2E8F0',
+                      }}>
                         <View style={{
-                          padding: designTokens.spacing.md,
-                          backgroundColor: designTokens.colors.infoLight,
-                          borderRadius: designTokens.borderRadius.md,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: designTokens.spacing.xs,
+                          marginBottom: designTokens.spacing.sm,
+                        }}>
+                          <View style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 8,
+                            backgroundColor: designTokens.colors.primary + '15',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}>
+                            <FileText size={16} color={designTokens.colors.primary} />
+                          </View>
+                          <Text style={{
+                            fontSize: 15,
+                            fontWeight: '600',
+                            color: designTokens.colors.textPrimary,
+                          }}>
+                            Barangay Notes
+                          </Text>
+                        </View>
+                        <View style={{
+                          paddingLeft: designTokens.spacing.sm,
                         }}>
                           <Text style={{
-                            fontSize: designTokens.typography.base,
+                            fontSize: 14,
                             color: designTokens.colors.textPrimary,
                             lineHeight: 22,
                           }}>
@@ -6121,8 +6330,8 @@ HanapBahay Complaint System
                       </View>
                     )}
 
-                    {/* Settlement Documents */}
-                    {selectedComplaintForHistory.settlementDocuments && selectedComplaintForHistory.settlementDocuments.length > 0 && (
+                    {/* Property Address */}
+                    {property && (
                       <View>
                         <Text style={{
                           fontSize: designTokens.typography.sm,
@@ -6132,14 +6341,72 @@ HanapBahay Complaint System
                           textTransform: 'uppercase',
                           letterSpacing: 0.5,
                         }}>
-                          Settlement Documents
+                          Property
                         </Text>
                         <Text style={{
                           fontSize: designTokens.typography.base,
                           color: designTokens.colors.textPrimary,
+                          flexWrap: 'wrap',
+                          flexShrink: 1,
                         }}>
-                          {selectedComplaintForHistory.settlementDocuments.length} document{selectedComplaintForHistory.settlementDocuments.length > 1 ? 's' : ''} uploaded by barangay
+                          {property.address}
                         </Text>
+                      </View>
+                    )}
+
+                    {/* Settlement Documents - Modern Style */}
+                    {selectedComplaintForHistory.settlementDocuments && selectedComplaintForHistory.settlementDocuments.length > 0 && (
+                      <View style={{ marginTop: designTokens.spacing.lg }}>
+                        <Text style={{
+                          fontSize: 13,
+                          fontWeight: '600',
+                          color: designTokens.colors.textSecondary,
+                          marginBottom: designTokens.spacing.sm,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                        }}>
+                          Settlement Documents ({selectedComplaintForHistory.settlementDocuments.length})
+                        </Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                          {selectedComplaintForHistory.settlementDocuments.map((docUri, index) => (
+                            <TouchableOpacity
+                              key={index}
+                              style={{
+                                width: 140,
+                                height: 180,
+                                borderRadius: designTokens.borderRadius.lg,
+                                overflow: 'hidden',
+                                backgroundColor: '#F3F4F6',
+                                marginRight: designTokens.spacing.sm,
+                                borderWidth: 2,
+                                borderColor: '#E5E7EB',
+                              }}
+                              onPress={() => setSelectedDocumentIndex(index)}
+                              activeOpacity={0.8}
+                            >
+                              <Image source={{ uri: docUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                              <View style={{
+                                position: 'absolute',
+                                bottom: 0,
+                                left: 0,
+                                right: 0,
+                                backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                                padding: designTokens.spacing.sm,
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: designTokens.spacing.xs,
+                              }}>
+                                <FileText size={16} color="#FFFFFF" />
+                                <Text style={{
+                                  color: '#FFFFFF',
+                                  fontSize: 13,
+                                  fontWeight: '600',
+                                }}>Doc {index + 1}</Text>
+                              </View>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
                       </View>
                     )}
 
@@ -6311,6 +6578,79 @@ HanapBahay Complaint System
           />
         )}
       </Modal>
+
+      {/* Complaint Video Player Modal */}
+      <Modal
+        visible={selectedComplaintVideoIndex !== null && selectedComplaintForHistory !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedComplaintVideoIndex(null)}
+      >
+        {selectedComplaintForHistory && selectedComplaintVideoIndex !== null && selectedComplaintForHistory.videos[selectedComplaintVideoIndex] && (
+          <VideoPlayerModal
+            videoUri={selectedComplaintForHistory.videos[selectedComplaintVideoIndex]}
+            onClose={() => setSelectedComplaintVideoIndex(null)}
+          />
+        )}
+      </Modal>
+
+      {/* Complaint Document Viewer Modal */}
+      <Modal
+        visible={selectedDocumentIndex !== null && selectedComplaintForHistory !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedDocumentIndex(null)}
+      >
+        {selectedComplaintForHistory && selectedDocumentIndex !== null && selectedComplaintForHistory.settlementDocuments && selectedComplaintForHistory.settlementDocuments[selectedDocumentIndex] && (
+          <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.95)' }}>
+            <View style={{
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: designTokens.spacing.md,
+              paddingTop: 50,
+              backgroundColor: 'rgba(0, 0, 0, 0.9)',
+            }}>
+              <Text style={{ fontSize: 18, fontWeight: '600', color: '#FFFFFF' }}>
+                Settlement Document {selectedDocumentIndex + 1}
+              </Text>
+              <TouchableOpacity
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: 'rgba(255, 255, 255, 0.3)',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+                onPress={() => setSelectedDocumentIndex(null)}
+              >
+                <X size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{
+                flexGrow: 1,
+                justifyContent: 'center',
+                alignItems: 'center',
+                padding: designTokens.spacing.md,
+              }}
+              maximumZoomScale={3}
+              minimumZoomScale={1}
+            >
+              <Image
+                source={{ uri: selectedComplaintForHistory.settlementDocuments[selectedDocumentIndex] }}
+                style={{
+                  width: Dimensions.get('window').width - 32,
+                  height: Dimensions.get('window').height - 150,
+                }}
+                resizeMode="contain"
+              />
+            </ScrollView>
+          </View>
+        )}
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -6394,7 +6734,7 @@ function PhotoViewerContent({ photos, initialIndex, onClose, onIndexChange }: { 
       >
         <X size={24} color="#FFFFFF" />
       </TouchableOpacity>
-      
+
       <FlatList
         ref={flatListRef}
         data={photos}
@@ -6413,7 +6753,7 @@ function PhotoViewerContent({ photos, initialIndex, onClose, onIndexChange }: { 
         initialNumToRender={3}
         style={{ flex: 1, width: '100%' }}
       />
-      
+
       {photos.length > 1 && (
         <View style={{
           position: 'absolute',

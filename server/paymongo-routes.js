@@ -64,6 +64,47 @@ async function paymongoRequest(method, endpoint, data = null) {
 }
 
 /**
+ * POST /api/paymongo/create-payment-link
+ * Creates a payment link for checkout
+ */
+router.post('/create-payment-link', async (req, res) => {
+  try {
+    const { amount, description, metadata } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid amount',
+      });
+    }
+
+    const paymentLinkData = {
+      data: {
+        attributes: {
+          amount: Math.round(amount),
+          description: description || 'Rent payment',
+          remarks: metadata ? JSON.stringify(metadata) : undefined,
+        },
+      },
+    };
+
+    const result = await paymongoRequest('POST', '/links', paymentLinkData);
+
+    res.json({
+      success: true,
+      data: result.data,
+      checkout_url: result.data.attributes.checkout_url,
+    });
+  } catch (error) {
+    console.error('Error creating payment link:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to create payment link',
+    });
+  }
+});
+
+/**
  * POST /api/paymongo/create-payment-intent
  * Creates a payment intent in Paymongo
  */

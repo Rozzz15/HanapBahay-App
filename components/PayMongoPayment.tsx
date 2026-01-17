@@ -22,6 +22,7 @@ import {
   getPaymentStatusText,
   type PaymongoPaymentIntent,
 } from '../utils/paymongo-api';
+import { createPaymentLink } from '../utils/paymongo-links';
 import { markRentPaymentAsPaid } from '../utils/tenant-payments';
 import { RentPayment } from '../utils/tenant-payments';
 import { API_BASE_URL } from '../constants';
@@ -46,10 +47,14 @@ export default function PayMongoPayment({
   const [status, setStatus] = useState<string>('');
 
   useEffect(() => {
-    if (visible && payment) {
+    console.log('📌 useEffect triggered - visible:', visible, 'has payment:', !!payment);
+    if (visible && payment && !paymentIntent) {
+      // Only initialize if we don't have a payment intent yet
+      console.log('🔄 Initializing payment...');
       initializePayment();
-    } else {
-      // Reset state when modal closes
+    } else if (!visible) {
+      // Only reset state when modal closes (visible becomes false)
+      console.log('❌ Modal closed - resetting state');
       setPaymentIntent(null);
       setShowWebView(false);
       setRedirectUrl(null);
@@ -61,11 +66,12 @@ export default function PayMongoPayment({
     try {
       setLoading(true);
       
-      // Create payment intent
+      // Create payment intent - Card only (GCash/PayMaya requires PayMongo account approval)
+      console.log('🔧 Creating payment intent with methods:', ['card']);
       const result = await createPaymentIntent({
         amount: formatAmountToCents(payment.totalAmount),
         currency: 'PHP',
-        payment_method_allowed: ['card', 'gcash', 'paymaya'],
+        payment_method_allowed: ['card'], // Only card payments for now
         description: `Rent payment for ${payment.paymentMonth}`,
         metadata: {
           paymentId: payment.id,
@@ -75,6 +81,12 @@ export default function PayMongoPayment({
           propertyId: payment.propertyId,
           paymentMonth: payment.paymentMonth,
         },
+      });
+      
+      console.log('✅ Payment intent created:', {
+        id: result.data?.id,
+        status: result.data?.attributes.status,
+        allowed_methods: result.data?.attributes.payment_method_allowed
       });
 
       if (!result.success || !result.data) {
@@ -208,24 +220,67 @@ export default function PayMongoPayment({
           }
         }
       } else if (paymentMethodType === 'card') {
-        // For card payments, we'd typically use Paymongo's payment form
-        // For now, we'll use the same confirm flow
-        const returnUrl = `${API_BASE_URL}/payment-return?payment_intent=${paymentIntentId}`;
-        const confirmResult = await confirmPaymentIntent({
-          payment_intent_id: paymentIntentId,
-          return_url: returnUrl,
+        // For card payments, create a payment link instead of using payment intent
+        // Payment links provide a ready-made checkout page
+        console.log('💳 Creating payment link for card payment...');
+        
+        const linkResult = await createPaymentLink({
+          amount: formatAmountToCents(payment.totalAmount),
+          description: `Rent payment for ${payment.paymentMonth}`,
+          metadata: {
+            paymentId: payment.id,
+            bookingId: payment.bookingId,
+            tenantId: payment.tenantId,
+            ownerId: payment.ownerId,
+            propertyId: payment.propertyId,
+            paymentMonth: payment.paymentMonth,
+          },
         });
-
-        if (!confirmResult.success) {
-          throw new Error(confirmResult.error || 'Failed to confirm payment');
+        
+        if (!linkResult.success || !linkResult.checkout_url) {
+          throw new Error(linkResult.error || 'Failed to create payment link');
         }
-
-        if (confirmResult.next_action?.redirect?.url) {
-          setRedirectUrl(confirmResult.next_action.redirect.url);
-          setShowWebView(true);
-        } else if (confirmResult.data) {
-          await checkPaymentStatus(confirmResult.data.id);
-        }
+        
+        const checkoutUrl = linkResult.checkout_url;
+        console.log('✅ Payment link created:', checkoutUrl);
+        
+        // Open payment link in external browser
+        Alert.alert(
+          'PayMongo Checkout',
+          'You will be redirected to PayMongo to complete your payment. Return to the app when done.',
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel'
+            },
+            {
+              text: 'Continue',
+              onPress: async () => {
+                const canOpen = await Linking.canOpenURL(checkoutUrl);
+                if (canOpen) {
+                  await Linking.openURL(checkoutUrl);
+                  
+                  // Show payment pending message
+                  Alert.alert(
+                    'Payment Processing',
+                    'Once you complete the payment in your browser, return here and we will check the status automatically.',
+                    [
+                      {
+                        text: 'OK',
+                        onPress: () => {
+                          // Close modal and refresh
+                          onClose();
+                        }
+                      }
+                    ]
+                  );
+                } else {
+                  Alert.alert('Error', 'Cannot open payment link');
+                }
+              }
+            }
+          ]
+        );
       }
     } catch (error) {
       console.error('❌ Error processing payment:', error);
@@ -426,21 +481,28 @@ export default function PayMongoPayment({
         </View>
 
         {showWebView && redirectUrl ? (
-          <WebView
-            source={{ uri: redirectUrl }}
-            style={styles.webview}
-            onNavigationStateChange={handleWebViewNavigation}
-            onShouldStartLoadWithRequest={(request) => {
-              // Handle return URLs
-              if (request.url.includes('payment-return') || 
-                  request.url.includes('payment_success') ||
-                  request.url.includes('payment_failed')) {
-                handleWebViewNavigation({ url: request.url });
-                return false;
-              }
-              return true;
-            }}
-          />
+          <>
+            <Text style={{ padding: 10, backgroundColor: '#10B981', color: 'white', textAlign: 'center' }}>
+              Loading PayMongo Checkout...
+            </Text>
+            <WebView
+              source={{ uri: redirectUrl }}
+              style={styles.webview}
+              onNavigationStateChange={handleWebViewNavigation}
+              onLoad={() => console.log('✅ WebView loaded')}
+              onError={(error) => console.error('❌ WebView error:', error)}
+              onShouldStartLoadWithRequest={(request) => {
+                // Handle return URLs
+                if (request.url.includes('payment-return') || 
+                    request.url.includes('payment_success') ||
+                    request.url.includes('payment_failed')) {
+                  handleWebViewNavigation({ url: request.url });
+                  return false;
+                }
+                return true;
+              }}
+            />
+          </>
         ) : (
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
             {loading ? (
@@ -479,7 +541,8 @@ export default function PayMongoPayment({
                   <View style={styles.methodsContainer}>
                     <Text style={styles.methodsTitle}>Select Payment Method</Text>
                     
-                    <TouchableOpacity
+                    {/* GCash - Temporarily disabled until PayMongo approves e-wallet payments */}
+                    {/* <TouchableOpacity
                       style={styles.methodButton}
                       onPress={() => handlePaymentMethodSelection('gcash')}
                     >
@@ -495,9 +558,10 @@ export default function PayMongoPayment({
                         <Text style={styles.methodDescription}>Pay using your GCash account</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-                    </TouchableOpacity>
+                    </TouchableOpacity> */}
 
-                    <TouchableOpacity
+                    {/* PayMaya - Temporarily disabled until PayMongo approves e-wallet payments */}
+                    {/* <TouchableOpacity
                       style={styles.methodButton}
                       onPress={() => handlePaymentMethodSelection('paymaya')}
                     >
@@ -513,7 +577,7 @@ export default function PayMongoPayment({
                         <Text style={styles.methodDescription}>Pay using your PayMaya/Maya wallet</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-                    </TouchableOpacity>
+                    </TouchableOpacity> */}
 
                     <TouchableOpacity
                       style={styles.methodButton}
@@ -528,6 +592,14 @@ export default function PayMongoPayment({
                       </View>
                       <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
                     </TouchableOpacity>
+                    
+                    {/* Info message about e-wallets */}
+                    <View style={{ marginTop: 16, padding: 12, backgroundColor: '#FFF9E6', borderRadius: 8, flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="information-circle" size={20} color="#856404" style={{ marginRight: 8 }} />
+                      <Text style={{ fontSize: 12, color: '#856404', flex: 1 }}>
+                        E-wallet payments (GCash/PayMaya) will be available once approved by PayMongo.
+                      </Text>
+                    </View>
                   </View>
                 )}
 

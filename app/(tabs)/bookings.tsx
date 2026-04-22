@@ -40,7 +40,7 @@ export default function TenantBookings() {
       });
     } catch (error) {
       console.error('❌ Error loading bookings:', error);
-      showAlert('Error', 'Failed to load bookings. Please try again.');
+      showAlert('Error', 'Failed to load rents. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -95,22 +95,22 @@ export default function TenantBookings() {
     
     // Enhanced confirmation dialog
     showAlert(
-      '⚠️ Cancel Booking Request?',
-      'Are you sure you want to cancel this booking?\n\n' +
-      '• This will remove the booking request completely\n' +
+      '⚠️ Cancel Rent Request?',
+      'Are you sure you want to cancel this rent?\n\n' +
+      '• This will remove the rent request completely\n' +
       '• The owner will be notified\n' +
       '• This action cannot be undone\n\n' +
       'Do you want to proceed?',
       [
         { 
-          text: 'No, Keep Booking', 
+          text: 'No, Keep Rent', 
           style: 'cancel',
           onPress: () => {
             console.log('❌ User cancelled the cancellation');
           }
         },
         { 
-          text: 'Yes, Cancel Booking', 
+          text: 'Yes, Cancel Rent', 
           style: 'destructive',
           onPress: async () => {
             try {
@@ -132,7 +132,7 @@ export default function TenantBookings() {
               });
 
               // Show success message
-              toast.show(notifications.operationSuccess('Booking cancelled and removed'));
+              toast.show(notifications.operationSuccess('Rent cancelled and removed'));
               
               console.log('✅ Cancel booking process completed successfully');
             } catch (error) {
@@ -261,8 +261,8 @@ export default function TenantBookings() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Bookings</Text>
-        <Text style={styles.headerSubtitle}>{stats.total} active bookings</Text>
+        <Text style={styles.headerTitle}>My Rents</Text>
+        <Text style={styles.headerSubtitle}>{stats.total} active rents</Text>
       </View>
 
       {/* Stats Cards */}
@@ -328,11 +328,11 @@ export default function TenantBookings() {
           ) : filteredBookings.length === 0 ? (
             <View style={styles.emptyState}>
               <Ionicons name="calendar-outline" size={48} color="#9CA3AF" />
-              <Text style={styles.emptyStateTitle}>No bookings found</Text>
+              <Text style={styles.emptyStateTitle}>No rents found</Text>
               <Text style={styles.emptyStateText}>
                 {filter === 'all' 
-                  ? 'You haven\'t made any booking requests yet'
-                  : `No ${filter} bookings found`
+                  ? 'You haven\'t made any rent requests yet'
+                  : `No ${filter} rents found`
                 }
               </Text>
               {filter === 'all' && (
@@ -367,9 +367,9 @@ export default function TenantBookings() {
                     </View>
                   </View>
 
-                  {/* Booking Details */}
+                  {/* Rent Details */}
                   <View style={styles.bookingDetails}>
-                    <Text style={styles.detailsTitle}>Booking Details</Text>
+                    <Text style={styles.detailsTitle}>Rent Details</Text>
                     <View style={styles.detailRow}>
                       <Ionicons name="calendar" size={14} color="#6B7280" />
                       <Text style={styles.detailText}>
@@ -430,10 +430,10 @@ export default function TenantBookings() {
                       <Text style={styles.detailsTitle}>Next Steps</Text>
                       <View style={styles.approvedCard}>
                         <Text style={styles.approvedTitle}>
-                          ✅ Booking Approved!
+                          ✅ Rent Approved!
                         </Text>
                         <Text style={styles.approvedText}>
-                          Your booking has been approved! Please contact the property owner to discuss move-in details.
+                          Your rent request has been approved! Please contact the property owner to discuss move-in details.
                         </Text>
                         <TouchableOpacity
                           onPress={async () => {
@@ -511,7 +511,7 @@ export default function TenantBookings() {
                         ]}
                       >
                         <Text style={styles.cancelButtonText}>
-                          {cancellingBookingId === booking.id ? 'Cancelling...' : 'Cancel Booking'}
+                          {cancellingBookingId === booking.id ? 'Cancelling...' : 'Cancel Rent'}
                         </Text>
                       </TouchableOpacity>
                     )}

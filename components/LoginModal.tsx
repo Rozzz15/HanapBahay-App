@@ -384,7 +384,7 @@ export default function LoginModal({ visible, onClose, onLoginSuccess, onSwitchT
                             <View style={styles.header}>
                                 <View style={styles.logoContainer}>
                                     <Image 
-                                        source={require('../assets/images/LOPEZ.jpg')}
+                                        source={require('../assets/images/Hanapbahay Logo.png')}
                                         style={styles.logoImage}
                                         resizeMode="contain"
                                     />

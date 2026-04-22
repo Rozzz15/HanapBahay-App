@@ -35,7 +35,7 @@ import {
 import { sharedStyles, designTokens, iconBackgrounds } from '../../styles/owner-dashboard-styles';
 import { showAlert } from '../../utils/alert';
 import { db } from '../../utils/db';
-import { DbUserRecord, PublishedListingRecord, BookingRecord, OwnerApplicationRecord, BrgyNotificationRecord } from '../../types';
+import { DbUserRecord, PublishedListingRecord, BookingRecord, OwnerApplicationRecord } from '../../types';
 
 const windowWidth = Dimensions.get('window').width;
 
@@ -56,10 +56,7 @@ export default function BrgyDashboard() {
   const [barangayName, setBarangayName] = useState<string>('');
   const [officialName, setOfficialName] = useState<string>('');
   const [barangayLogo, setBarangayLogo] = useState<string | null>(null);
-  const [pendingApplicationsCount, setPendingApplicationsCount] = useState(0);
   const [newComplaintsCount, setNewComplaintsCount] = useState(0);
-  const [pendingApplications, setPendingApplications] = useState<OwnerApplicationRecord[]>([]);
-  const [processingApplication, setProcessingApplication] = useState<string | null>(null);
   const [complaintsStats, setComplaintsStats] = useState({
     total: 0,
     new: 0,
@@ -136,7 +133,10 @@ export default function BrgyDashboard() {
       
       // Filter bookings to only include those with paid payment status
       // Only count tenants with completed payments as residents
-      const paidBookingsInBarangay = approvedBookingsInBarangay.filter(b => b.paymentStatus === 'paid');
+      // Exclude deleted bookings to match owner's tenant list
+      const paidBookingsInBarangay = approvedBookingsInBarangay.filter(b => 
+        b.paymentStatus === 'paid' && !b.isDeleted
+      );
       
       // Count residents including family/group members
       // Helper function to calculate people count from booking
@@ -213,17 +213,6 @@ export default function BrgyDashboard() {
         newPropertiesLast7Days, // New properties in last 7 days (all statuses)
       });
 
-      // Get pending owner applications count (reusing allApplications)
-      const pendingApps = allApplications.filter(
-        app => app.status === 'pending' && app.barangay.toUpperCase() === barangay.toUpperCase()
-      );
-      setPendingApplicationsCount(pendingApps.length);
-      // Sort by creation date (newest first)
-      pendingApps.sort((a, b) => 
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      setPendingApplications(pendingApps);
-
       // Process complaints statistics
       const newComplaints = allComplaints.filter(c => c.status === 'submitted').length;
       const resolvedComplaints = allComplaints.filter(c => c.status === 'resolved').length;
@@ -291,118 +280,7 @@ export default function BrgyDashboard() {
     }, [user, loadDashboardData])
   );
 
-  const handleApproveApplication = async (application: OwnerApplicationRecord) => {
-    if (!user?.id) return;
-    
-    try {
-      setProcessingApplication(application.id);
-      
-      // Update application status
-      const updatedApplication = {
-        ...application,
-        status: 'approved' as const,
-        reviewedBy: user.id,
-        reviewedAt: new Date().toISOString(),
-      };
-      
-      await db.upsert('owner_applications', application.id, updatedApplication);
-      
-      // Clear approval cache
-      try {
-        const { clearOwnerApprovalCache } = await import('../../utils/owner-approval');
-        clearOwnerApprovalCache();
-      } catch (cacheError) {
-        // Ignore cache clearing errors
-      }
-      
-      // Update user role to owner
-      const userRecord = await db.get<DbUserRecord>('users', application.userId);
-      if (userRecord) {
-        const updatedUser = {
-          ...userRecord,
-          role: 'owner' as const,
-          roles: ['owner'],
-          updatedAt: new Date().toISOString(),
-        };
-        await db.upsert('users', application.userId, updatedUser);
-      }
-      
-      // Delete notification if exists
-      const notifications = await db.list<BrgyNotificationRecord>('brgy_notifications');
-      const notification = notifications.find(
-        notif => notif.ownerApplicationId === application.id && notif.barangay === barangayName
-      );
-      if (notification) {
-        await db.remove('brgy_notifications', notification.id);
-      }
-      
-      // Reload data
-      await loadStats();
-      showAlert('Success', 'Application approved successfully!');
-    } catch (error) {
-      console.error('Error approving application:', error);
-      showAlert('Error', 'Failed to approve application');
-    } finally {
-      setProcessingApplication(null);
-    }
-  };
 
-  const handleRejectApplication = async (application: OwnerApplicationRecord) => {
-    if (!user?.id) return;
-    
-    showAlert(
-      'Reject Application',
-      `Are you sure you want to reject ${application.name}'s application?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reject',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setProcessingApplication(application.id);
-              
-              // Update application status
-              const updatedApplication = {
-                ...application,
-                status: 'rejected' as const,
-                reviewedBy: user.id,
-                reviewedAt: new Date().toISOString(),
-              };
-              
-              await db.upsert('owner_applications', application.id, updatedApplication);
-              
-              // Clear approval cache
-              try {
-                const { clearOwnerApprovalCache } = await import('../../utils/owner-approval');
-                clearOwnerApprovalCache();
-              } catch (cacheError) {
-                // Ignore cache clearing errors
-              }
-              
-              // Delete notification if exists
-              const notifications = await db.list<BrgyNotificationRecord>('brgy_notifications');
-              const notification = notifications.find(
-                notif => notif.ownerApplicationId === application.id && notif.barangay === barangayName
-              );
-              if (notification) {
-                await db.remove('brgy_notifications', notification.id);
-              }
-              
-              // Reload data
-              await loadStats();
-              showAlert('Success', 'Application rejected');
-            } catch (error) {
-              console.error('Error rejecting application:', error);
-              showAlert('Error', 'Failed to reject application');
-            } finally {
-              setProcessingApplication(null);
-            }
-          }
-        }
-      ]
-    );
-  };
 
   const handleLogout = () => {
     if (!user) {
@@ -443,22 +321,10 @@ export default function BrgyDashboard() {
   const getDefaultLogo = (barangayName: string | null | undefined) => {
     if (!barangayName) return null;
     
-    const barangayLower = barangayName.toLowerCase();
+    const barangayLower = barangayName?.toLowerCase() || '';
     
-    switch (barangayLower) {
-      case 'talolong':
-        return require('../../assets/images/talolong.jpg');
-      case 'burgos':
-        return require('../../assets/images/burgos.jpg');
-      case 'magsaysay':
-        return require('../../assets/images/magsaysay.jpg');
-      case 'gomez':
-        return require('../../assets/images/gomez.jpg');
-      case 'rizal':
-        return require('../../assets/images/rizal.jpg');
-      default:
-        return null;
-    }
+    // Return first letter as initial for the barangay
+    return barangayLower.charAt(0).toUpperCase();
   };
 
   const renderOverview = () => {
@@ -471,7 +337,6 @@ export default function BrgyDashboard() {
     const quickStats = [
       { label: 'Residents', value: stats.totalResidents, note: 'With completed payments' },
       { label: 'Properties', value: stats.totalProperties, note: 'Available homes' },
-      { label: 'Bookings', value: stats.activeBookings, note: 'On-going rentals' },
       { label: 'Total Owners', value: stats.totalApprovedOwners, note: 'Verified property partners' },
     ];
 
@@ -520,19 +385,8 @@ export default function BrgyDashboard() {
 
     const actionItems = [
       {
-        label: 'Owner Applications',
-        description: pendingApplicationsCount > 0
-          ? `${pendingApplicationsCount} pending review${pendingApplicationsCount > 1 ? 's' : ''}`
-          : 'Review owner applications',
-        icon: <ClipboardList size={24} color="#F59E0B" />,
-        iconBackground: iconBackgrounds.orange,
-        route: '/(brgy)/owner-applications',
-        badge: pendingApplicationsCount > 0 ? pendingApplicationsCount : undefined,
-        highlight: pendingApplicationsCount > 0,
-      },
-      {
-        label: 'Approved Owners',
-        description: 'View verified owners',
+        label: 'Property Owners',
+        description: 'View all property owners',
         icon: <CheckSquare size={24} color="#10B981" />,
         iconBackground: iconBackgrounds.green,
         route: '/(brgy)/approved-owners',
@@ -613,14 +467,6 @@ export default function BrgyDashboard() {
         route: '/(brgy)/properties',
       },
       {
-        label: 'Bookings',
-        gradient: designTokens.gradients.warning,
-        iconBg: iconBackgrounds.orange,
-        icon: Calendar,
-        iconColor: '#F59E0B',
-        route: '/(brgy)/properties',
-      },
-      {
         label: 'Total Owners',
         gradient: designTokens.gradients.purple,
         iconBg: iconBackgrounds.purple,
@@ -631,7 +477,6 @@ export default function BrgyDashboard() {
     ];
 
     const chartSeries = [
-      { label: 'Bookings', value: stats.activeBookings, color: '#6366F1', icon: Calendar },
       { label: 'Properties', value: stats.newPropertiesLast7Days || 0, color: '#0EA5E9', icon: Home },
       { label: 'Residents', value: stats.totalResidents, color: '#10B981', icon: Users },
       { label: 'Owners', value: stats.totalApprovedOwners, color: '#8B5CF6', icon: CheckSquare },
@@ -661,20 +506,12 @@ export default function BrgyDashboard() {
             ]}>
               <View style={[styles.heroEyebrowContainer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%' }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: designTokens.spacing.sm }}>
-                  {barangayLogo ? (
-                    <Image
-                      source={{ uri: barangayLogo }}
-                      style={styles.barangayLogo}
-                      resizeMode="cover"
-                    />
-                  ) : (() => {
-                    const defaultLogo = getDefaultLogo(barangayName);
-                    return defaultLogo ? (
-                      <Image
-                        source={defaultLogo}
-                        style={styles.barangayLogo}
-                        resizeMode="contain"
-                      />
+                  {(() => {
+                    const firstLetter = getDefaultLogo(barangayName);
+                    return firstLetter ? (
+                      <View style={[styles.barangayLogo, { backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center' }]}>
+                        <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>{firstLetter}</Text>
+                      </View>
                     ) : null;
                   })()}
                   <Text style={styles.heroEyebrow}>
@@ -971,186 +808,7 @@ export default function BrgyDashboard() {
           </View>
         </View>
 
-        {/* Pending Applications Section */}
-        {pendingApplications.length > 0 && (
-          <View style={{ marginBottom: designTokens.spacing['2xl'] }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: designTokens.spacing.lg }}>
-              <View>
-                <Text style={sharedStyles.sectionTitle}>Pending Applications</Text>
-                <Text style={{
-                  fontSize: designTokens.typography.sm,
-                  color: designTokens.colors.textSecondary,
-                  marginTop: designTokens.spacing.xs,
-                }}>
-                  Review and approve owner applications
-                </Text>
-              </View>
-              <View style={[sharedStyles.statIcon, iconBackgrounds.orange]}>
-                <Bell size={18} color="#F59E0B" />
-              </View>
-            </View>
-
-            {/* Summary Box */}
-            <View style={[sharedStyles.card, { 
-              backgroundColor: '#FFFBEB', 
-              borderColor: '#F59E0B', 
-              borderWidth: 1,
-              marginBottom: designTokens.spacing.lg 
-            }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: designTokens.spacing.md }}>
-                  <View style={[sharedStyles.statIcon, iconBackgrounds.orange]}>
-                    <Bell size={20} color="#F59E0B" />
-                  </View>
-                  <View>
-                    <Text style={[sharedStyles.statLabel, { color: '#92400E' }]}>
-                      {pendingApplicationsCount} Pending Application{pendingApplicationsCount > 1 ? 's' : ''}
-                    </Text>
-                    <Text style={[sharedStyles.statSubtitle, { fontSize: 12, color: '#92400E' }]}>
-                      Awaiting your review
-                    </Text>
-                  </View>
-                </View>
-                <View style={{
-                  backgroundColor: '#F59E0B',
-                  borderRadius: 20,
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                }}>
-                  <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>
-                    {pendingApplicationsCount}
-                  </Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Applications List */}
-            <View style={{ gap: designTokens.spacing.md }}>
-              {pendingApplications.slice(0, 3).map((application) => (
-                <View key={application.id} style={[sharedStyles.card, {
-                  borderLeftWidth: 4,
-                  borderLeftColor: '#F59E0B',
-                }]}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: designTokens.spacing.md }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[sharedStyles.statLabel, { marginBottom: 4 }]}>
-                        {application.name}
-                      </Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                        <Mail size={14} color="#6B7280" />
-                        <Text style={[sharedStyles.statSubtitle, { fontSize: 12 }]}>
-                          {application.email}
-                        </Text>
-                      </View>
-                      {application.contactNumber && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                          <Phone size={14} color="#6B7280" />
-                          <Text style={[sharedStyles.statSubtitle, { fontSize: 12 }]}>
-                            {application.contactNumber}
-                          </Text>
-                        </View>
-                      )}
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                        <MapPin size={14} color="#6B7280" />
-                        <Text style={[sharedStyles.statSubtitle, { fontSize: 12 }]}>
-                          {application.barangay}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={[sharedStyles.statSubtitle, { fontSize: 11, color: designTokens.colors.textMuted }]}>
-                      {new Date(application.createdAt).toLocaleDateString()}
-                    </Text>
-                  </View>
-                  
-                  <View style={{ 
-                    flexDirection: 'row', 
-                    gap: designTokens.spacing.sm, 
-                    marginTop: designTokens.spacing.md,
-                    paddingTop: designTokens.spacing.md,
-                    borderTopWidth: 1,
-                    borderTopColor: designTokens.colors.borderLight,
-                  }}>
-                    <TouchableOpacity
-                      style={{
-                        flex: 1,
-                        backgroundColor: '#10B981',
-                        paddingVertical: designTokens.spacing.sm,
-                        paddingHorizontal: designTokens.spacing.md,
-                        borderRadius: designTokens.borderRadius.md,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                      onPress={() => handleApproveApplication(application)}
-                      disabled={processingApplication === application.id}
-                      activeOpacity={0.7}
-                    >
-                      {processingApplication === application.id ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <CheckCircle size={16} color="#FFFFFF" />
-                          <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: 13 }}>
-                            Approve
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{
-                        flex: 1,
-                        backgroundColor: '#EF4444',
-                        paddingVertical: designTokens.spacing.sm,
-                        paddingHorizontal: designTokens.spacing.md,
-                        borderRadius: designTokens.borderRadius.md,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                      onPress={() => handleRejectApplication(application)}
-                      disabled={processingApplication === application.id}
-                      activeOpacity={0.7}
-                    >
-                      {processingApplication === application.id ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <XCircle size={16} color="#FFFFFF" />
-                          <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: 13 }}>
-                            Reject
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-              
-              {pendingApplications.length > 3 && (
-                <TouchableOpacity
-                  style={[sharedStyles.card, {
-                    alignItems: 'center',
-                    paddingVertical: designTokens.spacing.md,
-                    borderStyle: 'dashed',
-                    borderWidth: 2,
-                    borderColor: designTokens.colors.borderLight,
-                    backgroundColor: 'transparent',
-                  }]}
-                  onPress={() => router.push('/(brgy)/owner-applications')}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[sharedStyles.statLabel, { color: designTokens.colors.primary }]}>
-                    View All {pendingApplications.length} Applications
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        )}
-
-        <View style={[styles.card, styles.chartCard]}>
+<View style={[styles.card, styles.chartCard]}>
           <View style={styles.cardHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Engagement Trend</Text>
@@ -1286,7 +944,7 @@ export default function BrgyDashboard() {
                   fontSize: designTokens.typography.xs,
                   color: designTokens.colors.textMuted,
                 }}>
-                  Active Booking Rate
+                  Active Rent Rate
                 </Text>
                 <Text style={{
                   fontSize: designTokens.typography.sm,
@@ -1423,6 +1081,8 @@ const styles = StyleSheet.create<DashboardStyles>({
     height: 40,
     borderRadius: 20,
     overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   heroEyebrow: {
     fontSize: designTokens.typography.xs,

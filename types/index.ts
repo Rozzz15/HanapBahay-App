@@ -74,6 +74,7 @@ export interface DbUserRecord {
   gender?: 'male' | 'female';
   familyType?: 'individual' | 'couple' | 'family' | 'group';
   barangay?: string; // Barangay name for officials
+  permissions?: any; // User permissions
   createdAt: string;
   updatedAt?: string; // Timestamp for when user was last updated
 }
@@ -261,16 +262,18 @@ export interface PublishedListingRecord {
   leaseTerm: string;
   status: 'published';
   publishedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
   // Additional properties used in the app
   title?: string;
   location?: string;
   description?: string;
-  rooms?: number;
   size?: number;
   price?: number;
   ownerUserId?: string;
   capacity?: number; // Maximum number of tenants/slots
   roomCapacities?: number[]; // Capacity per room
+  inquiries?: number; // Number of inquiries
 }
 
 // Listing inquiry record (used for tracking messages/inquiries against a listing)
@@ -320,6 +323,8 @@ export interface BookingRecord {
   propertyId: string;
   tenantId: string;
   ownerId: string;
+  propertyName?: string;
+  address?: string;
   propertyTitle: string;
   propertyAddress: string;
   monthlyRent: number;
@@ -482,6 +487,7 @@ export interface MaintenanceRequestRecord {
   videos: string[]; // Array of video URIs
   ownerNotes?: string;
   resolvedAt?: string;
+  completedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

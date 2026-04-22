@@ -42,7 +42,7 @@ const sidebarNavItems: SidebarNavItem[] = [
   },
   {
     id: 'bookings',
-    label: 'Bookings',
+    label: 'Rent',
     icon: Calendar,
     path: '/(owner)/bookings',
     color: '#F59E0B',

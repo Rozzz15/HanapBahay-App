@@ -19,6 +19,12 @@ import { WebView } from 'react-native-webview';
 import { Dimensions } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
+
+// Type assertion for FileSystem directories
+const FS = FileSystem as typeof FileSystem & {
+  documentDirectory: string | null;
+  cacheDirectory: string | null;
+};
 import * as Sharing from 'expo-sharing';
 import { sharedStyles, designTokens, iconBackgrounds } from '../../styles/owner-dashboard-styles';
 import { getComplaintsByTenant, getComplaintCategoryLabel, getStatusLabel, getUrgencyColor, deleteTenantComplaint } from '../../utils/tenant-complaints';
@@ -45,12 +51,21 @@ export default function ComplaintTrackingScreen() {
     try {
       setLoading(true);
       
+      console.log('📋 Loading complaints for tenant:', user.id.slice(0, 8));
+      
       // Check if tenant has active booking
       const { getBookingsByTenant } = await import('../../utils/booking');
       const bookings = await getBookingsByTenant(user.id);
       const active = bookings.find(
         b => b.status === 'approved' && b.paymentStatus === 'paid'
       );
+      
+      console.log('🏠 Active booking:', active ? {
+        id: active.id.slice(0, 8),
+        propertyId: active.propertyId?.slice(0, 8),
+        status: active.status,
+        paymentStatus: active.paymentStatus
+      } : 'None');
       
       if (!active) {
         // No active booking - show message and allow viewing past complaints
@@ -62,6 +77,29 @@ export default function ComplaintTrackingScreen() {
       }
       
       const tenantComplaints = await getComplaintsByTenant(user.id);
+      console.log('📊 Total complaints found:', tenantComplaints.length);
+      console.log('📋 Complaint details:', tenantComplaints.map(c => ({
+        id: c.id.slice(0, 8),
+        category: c.category,
+        status: c.status,
+        createdAt: c.createdAt,
+        propertyId: c.propertyId?.slice(0, 8)
+      })));
+      
+      // Check for duplicates
+      const uniqueIds = new Set(tenantComplaints.map(c => c.id));
+      if (uniqueIds.size !== tenantComplaints.length) {
+        console.warn('⚠️ DUPLICATE COMPLAINTS DETECTED!');
+        console.warn('Unique IDs:', uniqueIds.size, 'Total complaints:', tenantComplaints.length);
+        
+        // Alert user about duplicates
+        Alert.alert(
+          '⚠️ Duplicate Complaints Detected',
+          `Found ${tenantComplaints.length} complaints but only ${uniqueIds.size} unique IDs. This is a data issue that needs to be fixed.`,
+          [{ text: 'OK' }]
+        );
+      }
+      
       setComplaints(tenantComplaints);
     } catch (error) {
       console.error('❌ Error loading complaints:', error);
@@ -88,7 +126,7 @@ export default function ComplaintTrackingScreen() {
       // Get file extension
       const fileExtension = documentUri.toLowerCase().endsWith('.pdf') ? 'pdf' : 'jpg';
       const fileName = `settlement_doc_${index + 1}_${Date.now()}.${fileExtension}`;
-      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+      const fileUri = `${FS.documentDirectory || ''}${fileName}`;
       
       // Download the file
       const downloadResult = await FileSystem.downloadAsync(documentUri, fileUri);
@@ -131,7 +169,7 @@ export default function ComplaintTrackingScreen() {
         setDownloadingDocument(true);
         const fileExtension = documentUri.toLowerCase().endsWith('.pdf') ? 'pdf' : 'jpg';
         const tempFileName = fileName || `document_${Date.now()}.${fileExtension}`;
-        const tempUri = `${FileSystem.cacheDirectory}${tempFileName}`;
+        const tempUri = `${FS.cacheDirectory || ''}${tempFileName}`;
         
         const downloadResult = await FileSystem.downloadAsync(documentUri, tempUri);
         
@@ -170,15 +208,25 @@ export default function ComplaintTrackingScreen() {
   };
 
   const handleDeleteComplaint = async (complaint: TenantComplaintRecord) => {
+    console.log('🗑️ Delete requested for complaint:', {
+      id: complaint.id.slice(0, 8),
+      status: complaint.status,
+      category: complaint.category,
+      createdAt: complaint.createdAt
+    });
+    
     // Check if complaint can be deleted (only submitted status)
     if (complaint.status !== 'submitted') {
+      console.log('❌ Cannot delete - status is not "submitted":', complaint.status);
       Alert.alert(
         'Cannot Delete',
-        'You can only delete complaints that have not been processed yet. This complaint has already been received by the barangay.',
+        `You can only delete complaints that have not been processed yet. This complaint has already been received by the barangay.\n\nCurrent Status: ${getStatusLabel(complaint.status)}`,
         [{ text: 'OK' }]
       );
       return;
     }
+    
+    console.log('✅ Status is "submitted" - proceeding with deletion');
 
     Alert.alert(
       'Delete Complaint',

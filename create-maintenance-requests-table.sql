@@ -62,12 +62,15 @@ CREATE INDEX IF NOT EXISTS idx_maintenance_requests_created_at
 
 -- Create trigger to auto-update updatedAt
 CREATE OR REPLACE FUNCTION update_maintenance_requests_updated_at()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
     NEW.updatedAt = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 DROP TRIGGER IF EXISTS update_maintenance_requests_updated_at_trigger ON public.maintenance_requests;
 

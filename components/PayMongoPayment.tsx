@@ -220,67 +220,23 @@ export default function PayMongoPayment({
           }
         }
       } else if (paymentMethodType === 'card') {
-        // For card payments, create a payment link instead of using payment intent
-        // Payment links provide a ready-made checkout page
-        console.log('💳 Creating payment link for card payment...');
+        // WORKAROUND: Card payments not supported with current PayMongo setup
+        // Would need Payment Links API (not deployed) or card tokenization
+        console.log('💳 Card payment selected');
         
-        const linkResult = await createPaymentLink({
-          amount: formatAmountToCents(payment.totalAmount),
-          description: `Rent payment for ${payment.paymentMonth}`,
-          metadata: {
-            paymentId: payment.id,
-            bookingId: payment.bookingId,
-            tenantId: payment.tenantId,
-            ownerId: payment.ownerId,
-            propertyId: payment.propertyId,
-            paymentMonth: payment.paymentMonth,
-          },
-        });
-        
-        if (!linkResult.success || !linkResult.checkout_url) {
-          throw new Error(linkResult.error || 'Failed to create payment link');
-        }
-        
-        const checkoutUrl = linkResult.checkout_url;
-        console.log('✅ Payment link created:', checkoutUrl);
-        
-        // Open payment link in external browser
         Alert.alert(
-          'PayMongo Checkout',
-          'You will be redirected to PayMongo to complete your payment. Return to the app when done.',
+          'Card Payment Temporarily Unavailable',
+          'Card payments are being configured. Please use GCash or PayMaya for now, or contact support.',
           [
             {
-              text: 'Cancel',
-              style: 'cancel'
-            },
-            {
-              text: 'Continue',
-              onPress: async () => {
-                const canOpen = await Linking.canOpenURL(checkoutUrl);
-                if (canOpen) {
-                  await Linking.openURL(checkoutUrl);
-                  
-                  // Show payment pending message
-                  Alert.alert(
-                    'Payment Processing',
-                    'Once you complete the payment in your browser, return here and we will check the status automatically.',
-                    [
-                      {
-                        text: 'OK',
-                        onPress: () => {
-                          // Close modal and refresh
-                          onClose();
-                        }
-                      }
-                    ]
-                  );
-                } else {
-                  Alert.alert('Error', 'Cannot open payment link');
-                }
-              }
+              text: 'OK',
+              style: 'default'
             }
           ]
         );
+        
+        setLoading(false);
+        return;
       }
     } catch (error) {
       console.error('❌ Error processing payment:', error);

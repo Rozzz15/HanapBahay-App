@@ -8,6 +8,7 @@ export interface BrgyDashboardStats {
   totalListings: number;
   activeBookings: number;
   totalApprovedOwners: number;
+  newPropertiesLast7Days?: number;
 }
 
 export async function getBrgyDashboardStats(

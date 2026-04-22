@@ -292,14 +292,14 @@ const SuccessNotification = ({
         </View>
 
         {/* Success Message */}
-        <Text style={styles.successTitle}>Booking Submitted!</Text>
+        <Text style={styles.successTitle}>Rent Submitted!</Text>
         <Text style={styles.successMessage}>
-          Your booking request has been submitted successfully. The property owner will review your request and get back to you soon.
+          Your rent request has been submitted successfully. The property owner will review your request and get back to you soon.
         </Text>
 
-        {/* Booking ID */}
+        {/* Rent ID */}
         <View style={styles.bookingIdContainer}>
-          <Text style={styles.bookingIdLabel}>Booking ID:</Text>
+          <Text style={styles.bookingIdLabel}>Rent ID:</Text>
           <Text style={styles.bookingIdValue}>{bookingId}</Text>
         </View>
 
@@ -309,7 +309,7 @@ const SuccessNotification = ({
             style={styles.viewBookingsButton} 
             onPress={onViewBookings}
           >
-            <Text style={styles.viewBookingsButtonText}>View My Bookings</Text>
+            <Text style={styles.viewBookingsButtonText}>View My Rents</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -616,7 +616,7 @@ export default function BookNowScreen() {
     }
 
     if (!startDate || startDate.trim() === '') {
-      Alert.alert('Date Required', 'Please select your preferred move-in date to continue with your booking.');
+      Alert.alert('Date Required', 'Please select your preferred move-in date to continue with your rent request.');
       return false;
     }
 
@@ -657,7 +657,7 @@ export default function BookNowScreen() {
 
     // Validate tenant type selection
     if (!tenantType) {
-      Alert.alert('Tenant Type Required', 'Please select your tenant type to continue with your booking.');
+      Alert.alert('Tenant Type Required', 'Please select your tenant type to continue with your rent request.');
       return false;
     }
 
@@ -685,7 +685,7 @@ export default function BookNowScreen() {
     // Validate room selection if property has room capacities
     if (propertyData?.roomCapacities && propertyData.roomCapacities.length > 0) {
       if (selectedRoom === undefined) {
-        Alert.alert('Room Selection Required', 'Please select a room for your booking.');
+        Alert.alert('Room Selection Required', 'Please select a room for your rent request.');
         return false;
       }
       
@@ -789,8 +789,8 @@ export default function BookNowScreen() {
       console.error('❌ Error creating booking:', error);
       console.error('❌ Error details:', error.message);
       
-      const errorMessage = error.message || 'Failed to create booking. Please try again.';
-      Alert.alert('Booking Failed', errorMessage);
+      const errorMessage = error.message || 'Failed to create rent. Please try again.';
+      Alert.alert('Rent Failed', errorMessage);
       
       // Reset processing state on error
       setIsProcessing(false);
@@ -858,9 +858,9 @@ export default function BookNowScreen() {
           </View>
                   </View>
 
-        {/* Booking Form */}
+        {/* Rent Form */}
         <View style={styles.formCard}>
-          <Text style={styles.formTitle}>Booking Details</Text>
+          <Text style={styles.formTitle}>Rent Details</Text>
           
           {/* Room Selection - Only show if property has room capacities */}
           {propertyData.roomCapacities && propertyData.roomCapacities.length > 0 && (() => {
@@ -1098,19 +1098,19 @@ export default function BookNowScreen() {
           </View>
         </View>
 
-        {/* Booking Terms */}
+{/* Rent Terms */}
         <View style={styles.termsCard}>
           <View style={styles.termsHeader}>
             <CheckCircle size={20} color="#10B981" />
-            <Text style={styles.termsTitle}>Booking Terms</Text>
-            </View>
-          
+            <Text style={styles.termsTitle}>Rent Terms</Text>
+          </View>
+        
           <Text style={styles.termsText}>
-            • Your booking request will be sent to the property owner for review{'\n'}
+            • Your rent request will be sent to the property owner for review{'\n'}
             • The owner has 48 hours to respond to your request{'\n'}
             • Monthly payment will be required upon approval{'\n'}
             • You can cancel your request before it&apos;s approved{'\n'}
-            • All bookings are subject to the property&apos;s terms and conditions
+            • All rent requests are subject to the property&apos;s terms and conditions
           </Text>
           </View>
       </ScrollView>
@@ -1124,7 +1124,7 @@ export default function BookNowScreen() {
         >
           <PesoIcon size={20} color="#FFFFFF" />
           <Text style={styles.bookButtonText}>
-            {isProcessing ? 'Processing...' : 'Submit Booking Request'}
+            {isProcessing ? 'Processing...' : 'Submit Rent Request'}
           </Text>
         </TouchableOpacity>
         

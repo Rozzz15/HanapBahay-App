@@ -25,6 +25,7 @@ import { showAlert } from '@/utils/alert';
 import { ConversationRecord, MessageRecord } from '@/types';
 import PaymentMethodsDisplay from '@/components/chat/PaymentMethodsDisplay';
 import OwnerInfoModal from '@/components/OwnerInfoModal';
+import { createSafeConversationUpdate } from '@/utils/conversation-update-helper';
 
 interface Message {
     id: string;
@@ -165,16 +166,21 @@ export default function ChatRoomNew() {
     const isInitialLoadRef = useRef(true); // Track if this is the initial load
 
     const loadParticipantInfo = useCallback(async () => {
+        const startTime = performance.now();
+        console.log('⏱️ [TENANT] loadParticipantInfo START');
+        
         if (!conversationId || !user?.id) {
-            console.log('⚠️ Missing required parameters for loadParticipantInfo:', { conversationId, userId: user?.id });
+            console.log('⚠️ Missing required parameters for loadParticipantInfo');
             return;
         }
 
         let conversationOwnerId: string | null = null;
 
         try {
+            const convStart = performance.now();
             // Get conversation to find the other participant
             const conversation = await db.get('conversations', conversationId as string) as ConversationRecord | null;
+            console.log(`⏱️ [TENANT] Get conversation: ${(performance.now() - convStart).toFixed(2)}ms`);
             if (!conversation) {
                 console.error('❌ Conversation not found in loadParticipantInfo:', conversationId);
                 return;
@@ -214,27 +220,9 @@ export default function ChatRoomNew() {
                         .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
                         .join(' ');
                     
-                    // Load profile photo from user_profile_photos table
+                    // OPTIMIZED: Skip profile photo loading for faster initial load
+                    // Profile photo can be loaded in background after chat is displayed
                     let participantAvatar = '';
-                    try {
-                        const { loadUserProfilePhoto } = await import('@/utils/user-profile-photos');
-                        const photoUri = await loadUserProfilePhoto(otherParticipantId);
-                        if (photoUri) {
-                            participantAvatar = photoUri;
-                            console.log('✅ Loaded participant profile photo for:', otherParticipantId);
-                            console.log('📸 Photo URI type:', typeof photoUri, 'starts with:', photoUri.substring(0, 50));
-                        } else {
-                            console.log('⚠️ No profile photo found for participant:', otherParticipantId);
-                        }
-                    } catch (photoError) {
-                        console.log('⚠️ Could not load participant profile photo:', photoError);
-                    }
-
-                    console.log('✅ Participant name determined:', {
-                        businessName,
-                        ownerName,
-                        finalName: participantName
-                    });
 
                     setParticipantInfo({
                         otherParticipantName: participantName,
@@ -302,11 +290,8 @@ export default function ChatRoomNew() {
                 }
             }
         } catch (error) {
-            console.error('Error loading participant info:', error);
-            // Use fallback name from URL parameters with proper capitalization
-            const fallbackName = Array.isArray(ownerName) ? (ownerName[0] || 'Unknown') : (ownerName || Array.isArray(tenantName) ? (tenantName?.[0] || 'Unknown') : (tenantName || 'Unknown'));
-            
-            // Capitalize the fallback name
+            console.error('❌ Error loading participant info:', error);
+            const fallbackName = Array.isArray(ownerName) ? (ownerName[0] || 'Unknown') : (ownerName || 'Unknown');
             const capitalizedFallbackName = fallbackName
                 .split(' ')
                 .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
@@ -317,7 +302,6 @@ export default function ChatRoomNew() {
                 otherParticipantAvatar: ''
             });
 
-            // Set owner modal info even in error case if we have the owner ID
             if (conversationOwnerId && user.id !== conversationOwnerId) {
                 setOwnerModalInfo({
                     id: conversationOwnerId,
@@ -326,64 +310,55 @@ export default function ChatRoomNew() {
                 });
             }
         }
+        
+        console.log(`⏱️ [TENANT] loadParticipantInfo TOTAL: ${(performance.now() - startTime).toFixed(2)}ms`);
     }, [conversationId, user?.id, ownerName, tenantName]);
 
     const loadMessages = useCallback(async (options?: { showLoading?: boolean }) => {
+        const startTime = performance.now();
+        console.log('⏱️ [TENANT] loadMessages START');
+        
         const showLoading = options?.showLoading ?? false;
 
         if (!conversationId || !user?.id) {
-            console.log('⚠️ Missing required parameters for loadMessages:', { conversationId, userId: user?.id });
-            // If we don't have the required params, we can't load anything.
-            // Only stop the loader if this call was intended to show it.
+            console.log('⚠️ Missing params for loadMessages');
             if (showLoading) setLoading(false);
             return;
         }
 
         try {
-            const startTime = Date.now();
-            console.log('⏱️ TENANT: Starting loadMessages...');
-            
-            // IMPORTANT: avoid toggling the full-screen loader during background refresh (polling/focus)
-            // because it unmounts the input on empty conversations and makes it impossible to type.
             if (showLoading) setLoading(true);
 
-            // OPTIMIZED: Query messages for this specific conversation only (instead of loading ALL messages)
+            // CRITICAL FIX: Query messages directly from Supabase for this conversation ONLY
+            // Don't load ALL messages - this was causing 10+ second delays!
             const normalizedConvId = String(conversationId || '').trim();
             
-            const queryStart = Date.now();
-            console.log('⏱️ TENANT: Starting Supabase query...');
+            const queryStart = performance.now();
+            let conversationMessages: MessageRecord[] = [];
             
-            // Use Supabase query to filter on the server side (much faster)
-            const { data: conversationMessages, error: messagesError } = await supabase
-                .from('messages')
-                .select('id, conversation_id, sender_id, text, type, image_uri, created_at, read_by')
-                .eq('conversation_id', normalizedConvId)
-                .order('created_at', { ascending: true });
-            
-            console.log(`⏱️ TENANT: Supabase query took ${Date.now() - queryStart}ms`);
-            
-            if (messagesError) {
-                console.error('❌ Error loading messages from Supabase:', messagesError);
-                // Fallback to old method if query fails
-                const allMessages = await db.list('messages') as MessageRecord[];
-                if (!Array.isArray(allMessages)) {
-                    console.error('❌ Invalid messages data:', allMessages);
-                    setMessages([]);
-                    if (showLoading) setLoading(false);
-                    return;
+            try {
+                // Use Supabase to filter on server-side (MUCH faster!)
+                // Only select columns we need (faster than SELECT *)
+                const { data, error } = await supabase
+                    .from('messages')
+                    .select('id, sender_id, text, type, image_uri, created_at')
+                    .eq('conversation_id', normalizedConvId)
+                    .order('created_at', { ascending: true });
+                
+                if (error) {
+                    console.error('Supabase query error:', error);
+                    // Don't fallback to loading all messages - just return empty array
+                    conversationMessages = [];
+                } else {
+                    conversationMessages = (data || []) as MessageRecord[];
                 }
-                
-                const conversationMessages = allMessages.filter((msg: MessageRecord) => {
-                    if (!msg) return false;
-                    const msgConvId = String(msg.conversationId || msg.conversation_id || '').trim();
-                    return msgConvId === normalizedConvId;
-                });
-                
-                console.log(`📨 Tenant: Found ${conversationMessages.length} messages (fallback method)`);
-            } else {
-                // Successfully got messages from query
-                console.log(`✅ Tenant: Loaded ${conversationMessages?.length || 0} messages directly from Supabase query`);
+            } catch (err) {
+                console.error('Error querying messages:', err);
+                // Don't fallback to loading all messages - just return empty array
+                conversationMessages = [];
             }
+            
+            console.log(`⏱️ [TENANT] Query messages: ${(performance.now() - queryStart).toFixed(2)}ms, found ${conversationMessages.length} messages`);
 
             // Sort by creation time
             conversationMessages.sort((a: MessageRecord, b: MessageRecord) => {
@@ -392,48 +367,33 @@ export default function ChatRoomNew() {
                 return dateA - dateB;
             });
 
-            // Get conversation to determine owner - try normalized ID first
+            // Get conversation to determine owner
+            const convGetStart = performance.now();
             let conversation: ConversationRecord | null = null;
             try {
                 conversation = await db.get('conversations', normalizedConvId) as ConversationRecord | null;
             } catch (error) {
-                console.log('⚠️ Conversation not found with normalized ID, trying original:', normalizedConvId);
+                console.error('Failed to get conversation:', error);
+                // Don't fallback to loading ALL conversations - just fail gracefully
+                conversation = null;
             }
-            
-            if (!conversation) {
-                // Try alternative ID formats
-                const allConversations = await db.list('conversations') || [];
-                conversation = (allConversations as any[]).find((c: any) => {
-                    const cId = String(c.id || '').trim();
-                    return cId === normalizedConvId;
-                }) as ConversationRecord | null;
-            }
+            console.log(`⏱️ [TENANT] Get conversation: ${(performance.now() - convGetStart).toFixed(2)}ms`);
             
             if (!conversation) {
                 console.error('❌ Conversation not found:', normalizedConvId);
-                console.error('📊 Available conversations:', (await db.list('conversations') || []).map((c: any) => c.id));
                 showAlert('Error', 'Conversation not found');
                 setMessages([]);
                 if (showLoading) setLoading(false);
                 return;
             }
-            
-            console.log('✅ Tenant: Conversation loaded:', {
-                id: conversation.id,
-                ownerId: conversation.ownerId || conversation.owner_id,
-                tenantId: conversation.tenantId || conversation.tenant_id
-            });
 
             const conversationOwnerId = conversation.ownerId || conversation.owner_id;
             
-            // Convert to UI format with proper null checks
+            // Convert to UI format
+            const mapStart = performance.now();
             const uiMessages: Message[] = conversationMessages
                 .map((msg: MessageRecord) => {
-                    if (!msg) {
-                        console.warn('⚠️ Invalid message record:', msg);
-                        return null;
-                    }
-                    
+                    if (!msg) return null;
                     return {
                         id: msg.id || '',
                         text: msg.text || '',
@@ -447,34 +407,19 @@ export default function ChatRoomNew() {
                     };
                 })
                 .filter((msg): msg is NonNullable<typeof msg> => msg !== null) as Message[];
+            console.log(`⏱️ [TENANT] Map to UI format: ${(performance.now() - mapStart).toFixed(2)}ms`);
 
-            // Merge with existing messages, avoiding duplicates by ID
+            // Merge with existing messages
+            const mergeStart = performance.now();
             setMessages(prev => {
                 const messageMap = new Map<string, Message>();
-                
-                // Add existing messages first
-                prev.forEach(msg => {
-                    if (msg && msg.id) {
-                        messageMap.set(msg.id, msg);
-                    }
-                });
-                
-                // Add/update with new messages (overwrites if ID exists)
-                uiMessages.forEach(msg => {
-                    if (msg && msg.id) {
-                        messageMap.set(msg.id, msg);
-                    }
-                });
-                
-                // Convert back to array and sort by creation time
+                prev.forEach(msg => { if (msg && msg.id) messageMap.set(msg.id, msg); });
+                uiMessages.forEach(msg => { if (msg && msg.id) messageMap.set(msg.id, msg); });
                 return Array.from(messageMap.values()).sort((a, b) => {
-                    const dateA = new Date(a.createdAt).getTime();
-                    const dateB = new Date(b.createdAt).getTime();
-                    return dateA - dateB;
+                    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
                 });
             });
-            console.log(`✅ TENANT: Loaded ${uiMessages.length} messages`);
-            console.log(`⏱️ TENANT: TOTAL TIME = ${Date.now() - startTime}ms`);
+            console.log(`⏱️ [TENANT] Merge messages: ${(performance.now() - mergeStart).toFixed(2)}ms`);
 
             // Only scroll to bottom on initial load or if user is already at bottom
             if (isInitialLoadRef.current || isUserAtBottomRef.current) {
@@ -483,72 +428,88 @@ export default function ChatRoomNew() {
                 }, 100);
                 isInitialLoadRef.current = false;
             }
+            
+            console.log(`⏱️ [TENANT] loadMessages TOTAL: ${(performance.now() - startTime).toFixed(2)}ms`);
         } catch (error) {
             console.error('❌ Error loading messages:', error);
             showAlert('Error', 'Failed to load messages');
-            setMessages([]); // Clear messages on error
+            setMessages([]);
         } finally {
             if (showLoading) setLoading(false);
         }
     }, [conversationId, user?.id]);
 
-    useEffect(() => {
-        try {
-            console.log('🔄 useEffect triggered:', { conversationId, userId: user?.id });
-            // Only load messages if we have the required parameters
-            if (conversationId && user?.id) {
-                loadParticipantInfo();
-                loadMessages({ showLoading: true });
-            } else {
-                console.log('⚠️ Missing required parameters, setting loading to false');
-                setLoading(false);
-            }
-        } catch (error) {
-            console.error('❌ Error in useEffect:', error);
-            setLoading(false);
-        }
-    }, [loadMessages, loadParticipantInfo, conversationId, user?.id]);
+    // Prevent concurrent loads
+    const isLoadingRef = useRef(false);
 
-    // Refresh messages when user returns to this screen
+    // Load ONLY on screen focus (remove duplicate useEffect)
     useFocusEffect(
         useCallback(() => {
-            if (conversationId && user?.id) {
-                loadParticipantInfo(); // Refresh participant info to get latest profile photo
-                
-                // Load messages asynchronously (non-blocking)
-                setTimeout(() => {
-                    loadMessages(); // background refresh (no full-screen loader)
-                }, 0);
-                
-                // Mark conversation as read in background (non-blocking)
-                setTimeout(async () => {
-                    try {
-                        const conv = await db.get<ConversationRecord>('conversations', String(conversationId).trim());
-                        if (conv) {
-                            const conversationOwnerId = conv.ownerId || conv.owner_id;
-                            const isCurrentUserOwner = user.id === conversationOwnerId;
-                            
-                            await db.upsert('conversations', String(conversationId).trim(), {
-                                ...conv,
-                                unreadByOwner: isCurrentUserOwner ? 0 : (conv.unreadByOwner || conv.unread_by_owner || 0),
-                                unreadByTenant: !isCurrentUserOwner ? 0 : (conv.unreadByTenant || conv.unread_by_tenant || 0),
-                                lastReadByOwner: isCurrentUserOwner ? new Date().toISOString() : (conv.lastReadByOwner || conv.last_read_by_owner),
-                                lastReadByTenant: !isCurrentUserOwner ? new Date().toISOString() : (conv.lastReadByTenant || conv.last_read_by_tenant),
-                                updatedAt: new Date().toISOString()
-                            });
-                        }
-                    } catch (error) {
-                        console.error('Error marking conversation as read:', error);
-                    }
-                }, 100);
-                
-                // Set up interval to check for new messages every 15 seconds (reduced frequency to minimize interruption)
-                const interval = setInterval(() => {
-                    loadMessages(); // background refresh (no full-screen loader)
-                }, 15000);
-                
-                return () => clearInterval(interval);
+            if (!conversationId || !user?.id) {
+                setLoading(false);
+                return;
             }
+            
+            // Prevent double loading
+            if (isLoadingRef.current) {
+                console.log('⏱️ [CHAT] Already loading, skipping...');
+                return;
+            }
+            
+            isLoadingRef.current = true;
+            console.log('⏱️ [CHAT] Starting load...');
+            const loadStart = performance.now();
+            
+            // Load participant info and messages in parallel
+            Promise.all([
+                loadParticipantInfo(),
+                loadMessages({ showLoading: true })
+            ]).then(() => {
+                console.log(`⏱️ [CHAT] Total loaded in ${(performance.now() - loadStart).toFixed(2)}ms`);
+                isLoadingRef.current = false;
+            }).catch((err) => {
+                console.error('❌ Error loading chat:', err);
+                isLoadingRef.current = false;
+                setLoading(false);
+            });
+            
+            // Mark conversation as read in background (non-blocking)
+            setTimeout(async () => {
+                try {
+                    const conv = await db.get<ConversationRecord>('conversations', String(conversationId).trim());
+                    if (conv) {
+                        const conversationOwnerId = conv.ownerId || conv.owner_id;
+                        const isCurrentUserOwner = user.id === conversationOwnerId;
+                        const now = new Date().toISOString();
+                        
+                        await db.upsert('conversations', String(conversationId).trim(), {
+                            id: conv.id,
+                            ownerId: conversationOwnerId,
+                            tenantId: conv.tenantId || conv.tenant_id,
+                            participantIds: conv.participantIds || conv.participant_ids || [],
+                            lastMessageText: conv.lastMessageText || conv.last_message_text,
+                            lastMessageAt: conv.lastMessageAt || conv.last_message_at,
+                            unreadByOwner: isCurrentUserOwner ? 0 : (conv.unreadByOwner || conv.unread_by_owner || 0),
+                            unreadByTenant: !isCurrentUserOwner ? 0 : (conv.unreadByTenant || conv.unread_by_tenant || 0),
+                            lastReadByOwner: isCurrentUserOwner ? now : (conv.lastReadByOwner || conv.last_read_by_owner),
+                            lastReadByTenant: !isCurrentUserOwner ? now : (conv.lastReadByTenant || conv.last_read_by_tenant),
+                            createdAt: conv.createdAt || conv.created_at || now,
+                            updatedAt: now,
+                            ...(conv.propertyId && { propertyId: conv.propertyId }),
+                            ...(conv.property_id && { propertyId: conv.property_id }),
+                            ...(conv.propertyTitle && { propertyTitle: conv.propertyTitle })
+                        });
+                    }
+                } catch (error) {
+                    console.error('❌ Error marking conversation as read:', error);
+                }
+            }, 100);
+            
+            // Disabled auto-refresh to prevent slowdowns
+            // const interval = setInterval(() => {
+            //     loadMessages();
+            // }, 30000);
+            // return () => clearInterval(interval);
         }, [loadMessages, loadParticipantInfo, conversationId, user?.id])
     );
 
@@ -622,14 +583,15 @@ export default function ChatRoomNew() {
                     const conversationOwnerId = conversation.ownerId || conversation.owner_id;
                     isCurrentUserOwner = user.id === conversationOwnerId;
                     
-                    await db.upsert('conversations', conversationId as string, {
-                        ...conversation,
+                    const safeUpdate = createSafeConversationUpdate(conversation, {
                         lastMessageText: '📷 Image',
                         lastMessageAt: now,
                         unreadByOwner: isCurrentUserOwner ? (conversation.unreadByOwner || conversation.unread_by_owner || 0) : ((conversation.unreadByOwner || conversation.unread_by_owner || 0) + 1),
                         unreadByTenant: !isCurrentUserOwner ? (conversation.unreadByTenant || conversation.unread_by_tenant || 0) : ((conversation.unreadByTenant || conversation.unread_by_tenant || 0) + 1),
                         updatedAt: now
                     });
+                    
+                    await db.upsert('conversations', conversationId as string, safeUpdate);
                 }
             } catch (convError) {
                 console.error('Error updating conversation:', convError);
@@ -693,12 +655,13 @@ export default function ChatRoomNew() {
                 try {
                     const conversation = await db.get('conversations', conversationId as string) as ConversationRecord | null;
                     if (conversation) {
-                        await db.upsert('conversations', conversationId as string, {
-                            ...conversation,
+                        const safeUpdate = createSafeConversationUpdate(conversation, {
                             lastMessageText: lastMessageText,
                             lastMessageAt: lastMessage.createdAt,
                             updatedAt: new Date().toISOString()
                         });
+                        
+                        await db.upsert('conversations', conversationId as string, safeUpdate);
                     }
                 } catch (convError) {
                     console.error('Error updating conversation after deletion:', convError);
@@ -859,22 +822,15 @@ export default function ChatRoomNew() {
                     const conversationTenantId = conversation.tenantId || conversation.tenant_id;
                     isCurrentUserOwner = user.id === conversationOwnerId;
                     
-                    // Ensure we preserve all conversation fields, especially ownerId and tenantId
-                    await db.upsert('conversations', normalizedConversationId, {
-                        id: normalizedConversationId,
-                        ownerId: conversationOwnerId || conversation.ownerId,
-                        tenantId: conversationTenantId || conversation.tenantId,
-                        participantIds: conversation.participantIds || conversation.participant_ids || [],
+                    const safeUpdate = createSafeConversationUpdate(conversation, {
                         lastMessageText: newMessage.trim(),
                         lastMessageAt: now,
                         unreadByOwner: isCurrentUserOwner ? (conversation.unreadByOwner || conversation.unread_by_owner || 0) : ((conversation.unreadByOwner || conversation.unread_by_owner || 0) + 1),
                         unreadByTenant: !isCurrentUserOwner ? (conversation.unreadByTenant || conversation.unread_by_tenant || 0) : ((conversation.unreadByTenant || conversation.unread_by_tenant || 0) + 1),
-                        createdAt: conversation.createdAt || conversation.created_at || now,
-                        updatedAt: now,
-                        ...(conversation.propertyId && { propertyId: conversation.propertyId }),
-                        ...(conversation.property_id && { propertyId: conversation.property_id }),
-                        ...(conversation.propertyTitle && { propertyTitle: conversation.propertyTitle })
+                        updatedAt: now
                     });
+                    
+                    await db.upsert('conversations', normalizedConversationId, safeUpdate);
                     
                     console.log('✅ Updated conversation after message:', {
                         conversationId: normalizedConversationId,

@@ -13,6 +13,7 @@ export const designTokens = {
     textPrimary: '#1F2937',
     textSecondary: '#6B7280',
     textMuted: '#9CA3AF',
+    text: '#1F2937',
     
     // Brand Colors - Modern Green Theme
     primary: '#10B981',

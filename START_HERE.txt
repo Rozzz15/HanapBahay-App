@@ -1,0 +1,141 @@
+================================================================================
+                    HANAPBAHAY - OWNER UPLOAD FIX
+================================================================================
+
+ISSUE: "Failed to upload documents" when creating owner accounts
+
+SOLUTION: ✅ Implemented enhanced upload with retry logic + missing bucket setup
+
+================================================================================
+                          🚀 QUICK START (15 MIN)
+================================================================================
+
+STEP 1: CREATE SUPABASE BUCKETS (5 min)
+----------------------------------------
+Go to: https://supabase.com/dashboard/project/pslcopwbzlfmuuqwshkx/storage
+
+Click "New Bucket" and create these 4 buckets (all PUBLIC):
+  ☐ owner-documents
+  ☐ property-images  
+  ☐ property-videos
+  ☐ profile-photos
+
+STEP 2: RUN SQL SCRIPT (2 min)
+-------------------------------
+Go to: https://supabase.com/dashboard/project/pslcopwbzlfmuuqwshkx/sql/new
+
+Copy/paste contents of: supabase-storage-setup.sql
+Click "Run" and wait for success ✅
+
+STEP 3: REBUILD APP (5 min)
+----------------------------
+Open terminal in: Desktop\hanapbahay
+Run: npx expo start --clear
+
+STEP 4: TEST (3 min)
+--------------------
+Install on device → Create owner account → Upload docs → Should work! ✅
+
+================================================================================
+                          📚 DOCUMENTATION FILES
+================================================================================
+
+⚡ QUICK START:
+   → QUICK_FIX_CHECKLIST.md      (2 min read - checklist format)
+   → README_UPLOAD_FIX.md         (10 min read - complete guide)
+
+🔧 TECHNICAL:
+   → supabase-storage-setup.sql   (SQL script to run)
+   → verify-upload-fix.js         (Run: node verify-upload-fix.js)
+
+📖 DETAILED:
+   → UPLOAD_FIX_INSTRUCTIONS.md         (Step-by-step setup)
+   → TROUBLESHOOTING_UPLOAD_ISSUES.md   (If issues persist)
+
+💻 CODE FILES:
+   → utils/supabase-storage-enhanced.ts (New enhanced upload)
+   → components/SignUpModal.tsx         (Modified - now uses enhanced upload)
+
+================================================================================
+                          🎯 WHAT WAS FIXED
+================================================================================
+
+BEFORE:
+  ❌ Single upload attempt - failed immediately
+  ❌ Generic error messages
+  ❌ No network check
+  ❌ Missing storage buckets
+  ❌ Restrictive permissions
+
+AFTER:
+  ✅ 3 automatic retries with increasing delays
+  ✅ Specific error messages (tells you what's wrong)
+  ✅ Network connectivity check before upload
+  ✅ Sequential upload (prevents overwhelming connection)
+  ✅ Handles different file formats from different devices
+  ✅ Storage buckets configured with proper permissions
+
+================================================================================
+                          ✅ VERIFICATION
+================================================================================
+
+To verify everything is set up correctly:
+
+  cd Desktop\hanapbahay
+  node verify-upload-fix.js
+
+Expected output: ✅ All checks passed!
+
+================================================================================
+                          🆘 TROUBLESHOOTING
+================================================================================
+
+Issue: "Bucket not found"
+Fix: Create the owner-documents bucket in Supabase Dashboard
+
+Issue: "Not allowed to upload"  
+Fix: Run the SQL script to set up storage policies
+
+Issue: "File not found"
+Fix: Enhanced upload now handles this automatically with retry
+
+Issue: Works on some devices but not others
+Fix: Enhanced upload handles different URI formats from different devices
+
+For detailed troubleshooting → TROUBLESHOOTING_UPLOAD_ISSUES.md
+
+================================================================================
+                          📞 QUICK REFERENCE
+================================================================================
+
+Supabase Dashboard: https://supabase.com/dashboard
+Project ID: pslcopwbzlfmuuqwshkx
+Storage URL: https://supabase.com/dashboard/project/pslcopwbzlfmuuqwshkx/storage
+SQL Editor: https://supabase.com/dashboard/project/pslcopwbzlfmuuqwshkx/sql/new
+
+App Location: C:\Users\Admin\Desktop\hanapbahay
+Build Command: npx expo start --clear
+Verify Command: node verify-upload-fix.js
+
+================================================================================
+                          🎉 SUCCESS INDICATORS
+================================================================================
+
+You'll know it works when you see these logs:
+
+  ✅ Using enhanced upload with retry logic
+  📤 Uploading 2 owner documents with retry logic...
+  📄 Uploading document 1/2: Government ID
+  📤 Upload attempt 1/3...
+  ✅ Upload successful on attempt 1
+  ✅ Successfully uploaded 2/2 documents
+
+================================================================================
+
+Questions? Check the documentation files listed above.
+Priority: 🔴 CRITICAL - Currently blocking all owner signups
+
+Last Updated: January 18, 2026
+Status: Ready for deployment
+
+================================================================================

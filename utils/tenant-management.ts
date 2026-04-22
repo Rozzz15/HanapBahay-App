@@ -176,7 +176,9 @@ export async function getTenantsByOwner(ownerId: string): Promise<ListingWithTen
 }
 
 /**
- * Get total number of active tenants for an owner (including family/group members)
+ * Get total number of active TENANT BOOKINGS for an owner
+ * This counts unique tenant bookings, NOT the total number of people
+ * Use getTotalActivePeople() if you need to count family members
  */
 export async function getTotalActiveTenants(ownerId: string): Promise<number> {
   try {
@@ -189,9 +191,33 @@ export async function getTotalActiveTenants(ownerId: string): Promise<number> {
         !booking.isDeleted
     );
     
+    // FIXED: Return number of TENANT BOOKINGS (each booking = 1 tenant unit)
+    // Previously was counting people (tenant + family), causing inflated numbers
+    return activeTenants.length;
+  } catch (error) {
+    console.error('❌ Error getting total active tenants:', error);
+    return 0;
+  }
+}
+
+/**
+ * Get total number of PEOPLE (tenants + family members) for an owner
+ * Use this if you want to count total occupancy including family/group members
+ */
+export async function getTotalActivePeople(ownerId: string): Promise<number> {
+  try {
+    const allBookings = await db.list<BookingRecord>('bookings');
+    const activeTenants = allBookings.filter(
+      booking => 
+        booking.ownerId === ownerId &&
+        booking.status === 'approved' &&
+        booking.paymentStatus === 'paid' &&
+        !booking.isDeleted
+    );
+    
     // Helper function to calculate people count from booking
     const getPeopleCountFromBooking = (booking: BookingRecord): number => {
-      if (!booking.tenantType) return 1; // Default to 1 if no tenant type
+      if (!booking.tenantType) return 1;
       
       switch (booking.tenantType) {
         case 'individual':
@@ -200,7 +226,6 @@ export async function getTotalActiveTenants(ownerId: string): Promise<number> {
           return 2;
         case 'family':
         case 'group':
-          // Count tenant (1) + family/group members (numberOfPeople)
           const members = booking.numberOfPeople || 0;
           return 1 + members;
         default:
@@ -215,7 +240,7 @@ export async function getTotalActiveTenants(ownerId: string): Promise<number> {
     
     return totalPeople;
   } catch (error) {
-    console.error('❌ Error getting total active tenants:', error);
+    console.error('❌ Error getting total active people:', error);
     return 0;
   }
 }

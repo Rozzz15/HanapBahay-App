@@ -200,52 +200,73 @@ export default function PaymentMethodsDisplay({ ownerId, tenantId, isCurrentUser
         );
         
         if (foundPayment) {
-          // Check if this is the current month payment and needs amount correction
+          // CRITICAL FIX: ALWAYS verify and correct payment amount, especially for first payment
           const currentMonth = getCurrentMonth();
           const paymentMonth = foundPayment.paymentMonth || nextDueDate.substring(0, 7);
           const isCurrentMonth = paymentMonth === currentMonth;
           
-          // If it's the current month payment and amount is wrong, update it
-          // Compare the base amount (without late fee) to booking.totalAmount
+          // Calculate expected amount: totalAmount for first/current month payment
+          const expectedAmount = (isCurrentMonth && approvedBooking.totalAmount) 
+            ? approvedBooking.totalAmount 
+            : (approvedBooking.monthlyRent || 0);
+          
+          // Compare the base amount (without late fee) to expected amount
           const paymentBaseAmount = foundPayment.totalAmount - (foundPayment.lateFee || 0);
-          if (isCurrentMonth && approvedBooking.totalAmount && 
-              paymentBaseAmount !== approvedBooking.totalAmount) {
-            console.log('⚠️ Current month payment from rent history has wrong amount, updating...', {
-              current: paymentBaseAmount,
-              expected: approvedBooking.totalAmount
+          
+          // If amount is wrong, update it immediately
+          if (paymentBaseAmount !== expectedAmount) {
+            console.log('⚠️ CORRECTING payment from rent history with wrong amount:', {
+              paymentId: foundPayment.id,
+              currentAmount: paymentBaseAmount,
+              expectedAmount: expectedAmount,
+              isCurrentMonth: isCurrentMonth,
+              bookingTotalAmount: approvedBooking.totalAmount,
+              monthlyRent: approvedBooking.monthlyRent,
+              advanceDepositMonths: approvedBooking.advanceDepositMonths
             });
+            
+            // Calculate correct due date: 7 days from approval for first payment
+            const approvalDate = approvedBooking.approvedAt ? new Date(approvedBooking.approvedAt) : new Date();
+            const correctDueDate = new Date(approvalDate);
+            correctDueDate.setDate(correctDueDate.getDate() + 7);
+            const correctDueDateString = correctDueDate.toISOString().split('T')[0];
             
             const updatedPayment = {
               ...foundPayment,
-              amount: approvedBooking.totalAmount,
-              totalAmount: approvedBooking.totalAmount + (foundPayment.lateFee || 0),
-              notes: 'Current month payment (includes advance deposit)',
+              amount: expectedAmount,
+              totalAmount: expectedAmount + (foundPayment.lateFee || 0),
+              paymentMonth: currentMonth, // Ensure current month for first payment
+              dueDate: correctDueDateString, // Ensure 7-day due date
+              notes: `First payment (includes ${approvedBooking.advanceDepositMonths || 0} month${(approvedBooking.advanceDepositMonths || 0) !== 1 ? 's' : ''} advance deposit) - Due within 7 days from approval`,
               updatedAt: new Date().toISOString()
             };
             
             await db.upsert('rent_payments', foundPayment.id, updatedPayment);
             paymentToUse = updatedPayment;
+            console.log('✅ Payment from rent history corrected successfully');
           } else {
             paymentToUse = foundPayment;
           }
         }
       }
 
-      // If no payment found, calculate payment based on booking
+      // FIXED: If no payment found, calculate payment based on CURRENT booking approval
       if (!paymentToUse) {
-        const startDate = new Date(approvedBooking.startDate);
-        nextDueDate = getNextDueDate(approvedBooking.startDate);
-        
-        // Get the current month
+        // CRITICAL FIX: Use current month and 7-day due date from booking approval
         const currentMonth = getCurrentMonth();
-        const paymentMonth = nextDueDate.substring(0, 7); // YYYY-MM format
-        const isCurrentMonth = paymentMonth === currentMonth;
+        const paymentMonth = currentMonth; // Always current month for first payment
         
-        // For the current month payment, use totalAmount (includes advance deposit)
-        // For other payments, use monthlyRent
-        nextDueAmount = isCurrentMonth && approvedBooking.totalAmount 
-          ? approvedBooking.totalAmount 
-          : approvedBooking.monthlyRent || 0;
+        // Calculate due date: 7 days from booking approval (or from now if approval date not available)
+        const approvalDate = approvedBooking.approvedAt ? new Date(approvedBooking.approvedAt) : new Date();
+        const dueDate = new Date(approvalDate);
+        dueDate.setDate(dueDate.getDate() + 7); // 7 days from approval
+        nextDueDate = dueDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+        
+        // CRITICAL FIX: For the first payment, ALWAYS use totalAmount (includes advance deposit)
+        // This ensures the correct amount (monthlyRent + advance deposit) is shown
+        nextDueAmount = approvedBooking.totalAmount || 
+                       ((approvedBooking.monthlyRent || 0) + 
+                        ((approvedBooking.advanceDepositMonths || 0) * (approvedBooking.monthlyRent || 0)));
 
         // Check if payment already exists for this due date
         const existingPayment = rentHistory.payments.find(
@@ -253,23 +274,30 @@ export default function PaymentMethodsDisplay({ ownerId, tenantId, isCurrentUser
         );
 
         if (existingPayment) {
-          // If this is the current month payment and the existing payment amount is wrong,
-          // update it to include advance deposit
-          // Compare the base amount (without late fee) to booking.totalAmount
+          // CRITICAL FIX: ALWAYS check and correct payment amount for first/initial payment
+          // Compare the base amount (without late fee) to the expected amount
           const paymentBaseAmount = existingPayment.totalAmount - (existingPayment.lateFee || 0);
-          if (isCurrentMonth && approvedBooking.totalAmount && 
-              paymentBaseAmount !== approvedBooking.totalAmount) {
-            console.log('⚠️ Existing current month payment has wrong amount, updating...', {
-              current: paymentBaseAmount,
-              expected: approvedBooking.totalAmount
+          const expectedAmount = nextDueAmount;
+          
+          // If payment amount is wrong, update it immediately
+          if (paymentBaseAmount !== expectedAmount) {
+            console.log('⚠️ CORRECTING existing payment with wrong amount:', {
+              paymentId: existingPayment.id,
+              currentAmount: paymentBaseAmount,
+              expectedAmount: expectedAmount,
+              bookingTotalAmount: approvedBooking.totalAmount,
+              monthlyRent: approvedBooking.monthlyRent,
+              advanceDepositMonths: approvedBooking.advanceDepositMonths
             });
             
-            // Update the existing payment with correct amount
+            // Update the existing payment with correct amount, month, and due date
             const updatedPayment = {
               ...existingPayment,
-              amount: approvedBooking.totalAmount,
-              totalAmount: approvedBooking.totalAmount + (existingPayment.lateFee || 0),
-              notes: 'Current month payment (includes advance deposit)',
+              amount: expectedAmount,
+              totalAmount: expectedAmount + (existingPayment.lateFee || 0),
+              paymentMonth: paymentMonth, // Ensure correct month
+              dueDate: nextDueDate, // Ensure correct due date
+              notes: `First payment (includes ${approvedBooking.advanceDepositMonths || 0} month${(approvedBooking.advanceDepositMonths || 0) !== 1 ? 's' : ''} advance deposit) - Due within 7 days from approval`,
               updatedAt: new Date().toISOString()
             };
             
@@ -277,13 +305,59 @@ export default function PaymentMethodsDisplay({ ownerId, tenantId, isCurrentUser
             await db.upsert('rent_payments', existingPayment.id, updatedPayment);
             
             paymentToUse = updatedPayment;
+            console.log('✅ Payment corrected successfully');
           } else {
-            paymentToUse = existingPayment;
+            // Amount is correct, but still update month and due date if needed
+            const needsMonthOrDateUpdate = 
+              existingPayment.paymentMonth !== paymentMonth || 
+              existingPayment.dueDate !== nextDueDate;
+            
+            if (needsMonthOrDateUpdate) {
+              console.log('⚠️ Updating payment month/due date:', {
+                currentMonth: existingPayment.paymentMonth,
+                expectedMonth: paymentMonth,
+                currentDueDate: existingPayment.dueDate,
+                expectedDueDate: nextDueDate
+              });
+              
+              const updatedPayment = {
+                ...existingPayment,
+                paymentMonth: paymentMonth,
+                dueDate: nextDueDate,
+                notes: `First payment (includes ${approvedBooking.advanceDepositMonths || 0} month${(approvedBooking.advanceDepositMonths || 0) !== 1 ? 's' : ''} advance deposit) - Due within 7 days from approval`,
+                updatedAt: new Date().toISOString()
+              };
+              
+              await db.upsert('rent_payments', existingPayment.id, updatedPayment);
+              paymentToUse = updatedPayment;
+            } else {
+              paymentToUse = existingPayment;
+            }
           }
         } else {
-          // Create the payment if it doesn't exist
-          // createRentPayment will handle detecting current month and using totalAmount
+          // Create the payment if it doesn't exist with correct current month and 7-day due date
           paymentToUse = await createRentPayment(approvedBooking.id, paymentMonth, nextDueDate);
+          
+          // Ensure the created payment has the correct amount (totalAmount with advance deposit)
+          if (paymentToUse && paymentToUse.amount !== nextDueAmount) {
+            console.log('⚠️ Created payment has wrong amount, updating...', {
+              current: paymentToUse.amount,
+              expected: nextDueAmount
+            });
+            
+            const updatedPayment = {
+              ...paymentToUse,
+              amount: nextDueAmount,
+              totalAmount: nextDueAmount + (paymentToUse.lateFee || 0),
+              paymentMonth: paymentMonth,
+              dueDate: nextDueDate,
+              notes: 'First payment (includes advance deposit) - Due within 7 days from approval',
+              updatedAt: new Date().toISOString()
+            };
+            
+            await db.upsert('rent_payments', paymentToUse.id, updatedPayment);
+            paymentToUse = updatedPayment;
+          }
         }
       }
 

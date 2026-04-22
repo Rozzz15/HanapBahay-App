@@ -26,6 +26,21 @@ export default function VideoPlayerModal({ videoUri, onClose }: VideoPlayerModal
     console.log('Video player rendering with URI:', videoUri);
   }, [videoUri]);
 
+  // Cleanup video player on unmount
+  React.useEffect(() => {
+    return () => {
+      if (player) {
+        try {
+          console.log('🧹 Cleaning up video player on unmount');
+          player.pause();
+          player.release();
+        } catch (err) {
+          console.log('Error releasing video player:', err);
+        }
+      }
+    };
+  }, [player]);
+
   return (
     <View style={styles.container}>
       <TouchableOpacity style={styles.closeButton} onPress={onClose}>

@@ -199,17 +199,17 @@ export const notifications = {
     duration: 4000,
   }),
 
-  // Booking
+  // Rent Request
   bookingSuccess: (propertyTitle: string) => createNotification({
-    title: 'Booking Confirmed! 🎉',
-    description: `Your booking for "${propertyTitle}" has been submitted successfully. The property owner will review your request shortly.`,
+    title: 'Rent Confirmed! 🎉',
+    description: `Your rent request for "${propertyTitle}" has been submitted successfully. The property owner will review your request shortly.`,
     type: 'success',
     duration: 6000,
   }),
 
   bookingError: () => createNotification({
-    title: 'Booking Failed',
-    description: 'Unable to process your booking. Please check your information and try again.',
+    title: 'Rent Failed',
+    description: 'Unable to process your rent request. Please check your information and try again.',
     type: 'error',
     duration: 4000,
   }),

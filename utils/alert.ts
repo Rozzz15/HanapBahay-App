@@ -50,11 +50,16 @@ export const showAlert = (
 /**
  * Simple alert with just OK button
  */
-export const showSimpleAlert = (title: string, message?: string) => {
+export const showSimpleAlert = (title: string, message?: string, onOk?: () => void) => {
   if (false) {
     window.alert(message ? `${title}\n\n${message}` : title);
+    if (onOk) {
+      onOk();
+    }
   } else {
-    Alert.alert(title, message);
+    Alert.alert(title, message, [
+      { text: 'OK', onPress: onOk }
+    ]);
   }
 };
 

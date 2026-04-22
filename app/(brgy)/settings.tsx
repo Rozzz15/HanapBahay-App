@@ -527,28 +527,36 @@ export default function SettingsPage() {
             </View>
 
             {/* Current Logo Display */}
-            {barangayLogo ? (
-              <View style={{ marginBottom: designTokens.spacing.lg }}>
+            <View style={{ marginBottom: designTokens.spacing.lg }}>
+              <View style={{
+                alignItems: 'center',
+                marginBottom: designTokens.spacing.md,
+              }}>
                 <View style={{
+                  position: 'relative',
+                  width: 120,
+                  height: 120,
+                  borderRadius: 60,
+                  overflow: 'hidden',
+                  borderWidth: 3,
+                  borderColor: designTokens.colors.primary,
+                  backgroundColor: '#10B981',
+                  justifyContent: 'center',
                   alignItems: 'center',
-                  marginBottom: designTokens.spacing.md,
+                  ...designTokens.shadows.md,
                 }}>
-                  <View style={{
-                    position: 'relative',
-                    width: 120,
-                    height: 120,
-                    borderRadius: 60,
-                    overflow: 'hidden',
-                    borderWidth: 3,
-                    borderColor: designTokens.colors.primary,
-                    backgroundColor: designTokens.colors.background,
-                    ...designTokens.shadows.md,
-                  }}>
+                  {barangayLogo ? (
                     <Image
                       source={{ uri: barangayLogo }}
                       style={{ width: '100%', height: '100%' }}
                       resizeMode="cover"
                     />
+                  ) : (
+                    <Text style={{ color: 'white', fontSize: 48, fontWeight: 'bold' }}>
+                      {barangay?.charAt(0).toUpperCase() || 'B'}
+                    </Text>
+                  )}
+                  {barangayLogo && (
                     <TouchableOpacity
                       onPress={handleRemoveLogo}
                       style={{
@@ -567,26 +575,27 @@ export default function SettingsPage() {
                     >
                       <X size={14} color="white" />
                     </TouchableOpacity>
-                  </View>
+                  )}
                 </View>
-                <TouchableOpacity
-                  onPress={pickLogo}
-                  style={{
-                    backgroundColor: designTokens.colors.background,
-                    borderRadius: designTokens.borderRadius.md,
-                    paddingVertical: designTokens.spacing.md,
-                    alignItems: 'center',
-                    borderWidth: 1,
-                    borderColor: designTokens.colors.borderLight,
-                    marginBottom: designTokens.spacing.sm,
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{
-                    fontSize: designTokens.typography.base,
-                    fontWeight: '600',
-                    color: designTokens.colors.textPrimary,
-                  }}>
+              </View>
+              <TouchableOpacity
+                onPress={pickLogo}
+                style={{
+                  backgroundColor: designTokens.colors.background,
+                  borderRadius: designTokens.borderRadius.md,
+                  paddingVertical: designTokens.spacing.md,
+                  alignItems: 'center',
+                  borderWidth: 1,
+                  borderColor: designTokens.colors.borderLight,
+                  marginBottom: designTokens.spacing.sm,
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  fontSize: designTokens.typography.base,
+                  fontWeight: '600',
+                  color: designTokens.colors.textPrimary,
+                }}>
                     Change Logo
                   </Text>
                 </TouchableOpacity>
@@ -671,8 +680,7 @@ export default function SettingsPage() {
                   </Text>
                 </TouchableOpacity>
               </View>
-            )}
-          </View>
+            </View>
 
           {/* Password Change Section */}
           <View style={[sharedStyles.card, { marginBottom: designTokens.spacing.lg }]}>

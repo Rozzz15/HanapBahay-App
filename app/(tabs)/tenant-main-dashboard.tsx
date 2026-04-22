@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -252,28 +252,19 @@ export default function TenantMainDashboard() {
 
     try {
       setLoading(true);
+      const startTime = Date.now();
 
-      // Update overdue payments (runs in background)
-      try {
-        const { updateOverduePayments } = await import('../../utils/tenant-payments');
-        updateOverduePayments().catch(err => {
-          console.log('Overdue payment update completed (background)');
-        });
-      } catch (err) {
-        // Silently fail - overdue update is not critical
-      }
+      // Background tasks (non-blocking)
+      Promise.all([
+        import('../../utils/tenant-payments').then(({ updateOverduePayments }) => 
+          updateOverduePayments().catch(() => {})
+        ),
+        import('../../utils/advance-deposit').then(({ processTerminationCountdown }) => 
+          processTerminationCountdown().catch(() => {})
+        ),
+      ]).catch(() => {});
 
-      // Process termination countdown (runs in background)
-      try {
-        const { processTerminationCountdown } = await import('../../utils/advance-deposit');
-        processTerminationCountdown().catch(err => {
-          console.log('Termination countdown processing completed (background)');
-        });
-      } catch (err) {
-        // Silently fail - countdown processing is not critical
-      }
-
-      // Get active booking (approved and paid, or with termination countdown)
+      // Step 1: Get active booking (critical)
       const bookings = await getBookingsByTenant(user.id);
       const active = bookings.find(
         b => (b.status === 'approved' && b.paymentStatus === 'paid') ||
@@ -281,99 +272,95 @@ export default function TenantMainDashboard() {
       );
 
       if (!active) {
-        // No active booking, redirect to property browsing
         router.replace('/(tabs)');
         return;
       }
 
       setActiveBooking(active);
 
-      // Load property details
-      const propertyData = await db.get<PublishedListingRecord>('published_listings', active.propertyId);
-      setProperty(propertyData || null);
+      // Step 2: Parallel loading of critical data
+      const [
+        propertyData,
+        advanceInfo,
+        countdownInfo,
+      ] = await Promise.allSettled([
+        db.get<PublishedListingRecord>('published_listings', active.propertyId),
+        getAdvanceDepositInfo(active.id).catch(() => ({ hasAdvanceDeposit: false })),
+        getTerminationCountdownInfo(active.id).catch(() => ({ hasCountdown: false })),
+      ]);
 
-      // Load advance deposit info
-      try {
-        const advanceInfo = await getAdvanceDepositInfo(active.id);
-        setAdvanceDepositInfo(advanceInfo);
-      } catch (error) {
-        console.error('❌ Error loading advance deposit info:', error);
-        setAdvanceDepositInfo({ hasAdvanceDeposit: false });
-      }
+      // Set critical data immediately
+      if (propertyData.status === 'fulfilled') setProperty(propertyData.value || null);
+      if (advanceInfo.status === 'fulfilled') setAdvanceDepositInfo(advanceInfo.value);
+      if (countdownInfo.status === 'fulfilled') setTerminationCountdown(countdownInfo.value);
 
-      // Load termination countdown info
-      try {
-        const countdownInfo = await getTerminationCountdownInfo(active.id);
-        setTerminationCountdown(countdownInfo);
-      } catch (error) {
-        console.error('❌ Error loading termination countdown info:', error);
-        setTerminationCountdown({ hasCountdown: false });
-      }
-
-      // Initialize monthly payments if needed
+      // Step 3: Initialize payments and load payment data in parallel
       await initializeMonthlyPayments(active.id);
 
-      // Load rent history - filter by active booking to prevent previous booking payments from showing
-      const history = await getRentHistorySummary(user.id, active.id);
-      setRentHistory(history);
+      const [
+        history,
+        paymentReminders,
+        future,
+        allAccounts,
+      ] = await Promise.allSettled([
+        getRentHistorySummary(user.id, active.id),
+        getPaymentReminders(user.id),
+        getFuturePaymentMonths(active.id, 6),
+        db.list('payment_accounts'),
+      ]);
 
-      // Load payment reminders
-      const paymentReminders = await getPaymentReminders(user.id);
-      setReminders(paymentReminders);
+      // Set payment data
+      if (history.status === 'fulfilled') {
+        setRentHistory(history.value);
+        
+        // Check and create next payment if needed
+        if (history.value.nextDueDate && history.value.nextDueAmount) {
+          const existingPayments = history.value.payments.filter(
+            p => p.dueDate === history.value.nextDueDate && p.status === 'pending'
+          );
 
-      // Create next payment if it doesn't exist
-      if (history.nextDueDate && history.nextDueAmount) {
-        const existingPayments = history.payments.filter(
-          p => p.dueDate === history.nextDueDate && p.status === 'pending'
-        );
-
-        if (existingPayments.length === 0) {
-          const paymentMonth = history.nextDueDate.substring(0, 7);
-          await createRentPayment(active.id, paymentMonth, history.nextDueDate);
-
-          // Reload history - filter by active booking
-          const updatedHistory = await getRentHistorySummary(user.id, active.id);
-          setRentHistory(updatedHistory);
+          if (existingPayments.length === 0) {
+            const paymentMonth = history.value.nextDueDate.substring(0, 7);
+            createRentPayment(active.id, paymentMonth, history.value.nextDueDate)
+              .then(() => getRentHistorySummary(user.id, active.id))
+              .then(updated => setRentHistory(updated))
+              .catch(console.error);
+          }
         }
       }
 
-      // Load future payments for advanced payment
-      const future = await getFuturePaymentMonths(active.id, 6);
-      setFuturePayments(future);
-
-      // Load owner payment accounts
-      try {
-        const allAccounts = await db.list('payment_accounts');
-        const ownerAccounts = allAccounts.filter(
+      if (paymentReminders.status === 'fulfilled') setReminders(paymentReminders.value);
+      if (future.status === 'fulfilled') setFuturePayments(future.value);
+      
+      if (allAccounts.status === 'fulfilled') {
+        const ownerAccounts = allAccounts.value.filter(
           (account: any) =>
             account.ownerId === active.ownerId &&
             account.isActive &&
             (account.type === 'gcash' || account.type === 'paymaya' || account.type === 'bank_transfer' || account.type === 'cash')
         );
         setOwnerPaymentAccounts(ownerAccounts);
-      } catch (error) {
-        console.error('❌ Error loading owner payment accounts:', error);
       }
 
-      // Load maintenance requests
-      try {
-        const requests = await getMaintenanceRequestsByBooking(active.id);
-        // Sort by created date (newest first)
-        requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setMaintenanceRequests(requests);
-        const pendingCount = await getPendingMaintenanceRequestsCount(user.id);
-        setPendingMaintenanceCount(pendingCount);
-      } catch (error) {
-        console.error('❌ Error loading maintenance requests:', error);
+      // Step 4: Load secondary data (maintenance & complaints) in parallel
+      const [requests, tenantComplaints] = await Promise.allSettled([
+        getMaintenanceRequestsByBooking(active.id).then(reqs => {
+          reqs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          return reqs;
+        }),
+        getComplaintsByTenant(user.id),
+      ]);
+
+      if (requests.status === 'fulfilled') {
+        setMaintenanceRequests(requests.value);
+        getPendingMaintenanceRequestsCount(user.id).then(setPendingMaintenanceCount).catch(console.error);
+      }
+      
+      if (tenantComplaints.status === 'fulfilled') {
+        setComplaints(tenantComplaints.value);
       }
 
-      // Load complaints
-      try {
-        const tenantComplaints = await getComplaintsByTenant(user.id);
-        setComplaints(tenantComplaints);
-      } catch (error) {
-        console.error('❌ Error loading complaints:', error);
-      }
+      console.log(`⚡ Dashboard loaded in ${Date.now() - startTime}ms`);
 
     } catch (error) {
       console.error('❌ Error loading dashboard data:', error);
@@ -925,7 +912,7 @@ export default function TenantMainDashboard() {
   const handlePaymentMethodAction = useCallback(async (account: PaymentAccount) => {
     if (selectedPayments.size === 0) return;
     if (!activeBooking?.id) {
-      Alert.alert('Error', 'Booking information not found. Please try again.');
+      Alert.alert('Error', 'Rent information not found. Please try again.');
       return;
     }
 
@@ -1731,9 +1718,11 @@ export default function TenantMainDashboard() {
 
     try {
       // Generate comprehensive payment history document
-      const paidPayments = rentHistory.payments.filter(p => p.status === 'paid');
-      const pendingPayments = rentHistory.payments.filter(p => p.status === 'pending');
-      const overduePayments = rentHistory.payments.filter(p => p.status === 'overdue');
+      const { paidPayments, pendingPayments, overduePayments } = useMemo(() => ({
+        paidPayments: rentHistory.payments.filter(p => p.status === 'paid'),
+        pendingPayments: rentHistory.payments.filter(p => p.status === 'pending'),
+        overduePayments: rentHistory.payments.filter(p => p.status === 'overdue'),
+      }), [rentHistory.payments]);
 
       // Generate HTML content for PDF
       const paymentRows = rentHistory.payments.map((payment, index) => {
@@ -2810,7 +2799,10 @@ HanapBahay Complaint System
                 <View style={[sharedStyles.statIcon, iconBackgrounds.blue, { width: 32, height: 32 }]}>
                   <Wrench size={16} color="#3B82F6" />
                 </View>
-                <Text style={[sharedStyles.sectionTitle, { fontSize: designTokens.typography.base }]}>Maintenance Requests</Text>
+                <View>
+                  <Text style={[sharedStyles.sectionTitle, { fontSize: designTokens.typography.base }]}>Maintenance Requests</Text>
+                  <Text style={{ fontSize: 10, color: '#6B7280', marginTop: -2 }}>For Property Owners</Text>
+                </View>
               </View>
               {pendingMaintenanceCount > 0 && (
                 <View style={{
@@ -2997,7 +2989,10 @@ HanapBahay Complaint System
                 <View style={[sharedStyles.statIcon, iconBackgrounds.red, { width: 32, height: 32 }]}>
                   <AlertTriangle size={16} color="#EF4444" />
                 </View>
-                <Text style={[sharedStyles.sectionTitle, { fontSize: designTokens.typography.base }]}>Complaints</Text>
+                <View>
+                  <Text style={[sharedStyles.sectionTitle, { fontSize: designTokens.typography.base }]}>Complaints</Text>
+                  <Text style={{ fontSize: 10, color: '#6B7280', marginTop: -2 }}>For Brgy. Officials</Text>
+                </View>
               </View>
               {complaints.filter(c => c.status === 'submitted' || c.status === 'received_by_brgy' || c.status === 'under_review').length > 0 && (
                 <View style={{
@@ -3514,11 +3509,11 @@ HanapBahay Complaint System
               })()}
 
               {/* Future Payments */}
-              {futurePayments.length > 0 && (
+              {futurePayments.filter(p => p.status !== 'paid' && p.status !== 'pending_owner_confirmation').length > 0 && (
                 <View style={styles.paymentSection}>
                   <Text style={styles.paymentSectionTitle}>Future Payments</Text>
                   <View style={styles.advancedPaymentList}>
-                    {futurePayments.map((payment) => {
+                    {futurePayments.filter(p => p.status !== 'paid' && p.status !== 'pending_owner_confirmation').map((payment) => {
                       const isSelected = selectedPayments.has(payment.id);
                       const monthName = formatPaymentMonth(payment.paymentMonth, 'long');
 
@@ -4020,7 +4015,7 @@ HanapBahay Complaint System
         </View>
       </Modal>
 
-      {/* Booking Status Modal */}
+      {/* Rent Status Modal */}
       <BookingStatusModal
         visible={bookingStatusModal.visible}
         booking={bookingStatusModal.booking}
@@ -4255,8 +4250,9 @@ HanapBahay Complaint System
                 ]}
                 onPress={() => setShowEndRentalModal(false)}
                 disabled={endingRental}
-                activeOpacity={0.6}
+                activeOpacity={0.7}
               >
+                <XCircle size={18} color="#6B7280" strokeWidth={2} />
                 <Text style={styles.endRentalCancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               {terminationCountdown.hasCountdown ? (
@@ -4268,13 +4264,13 @@ HanapBahay Complaint System
                   ]}
                   onPress={() => handleConfirmEndRentalStay(true)}
                   disabled={endingRental}
-                  activeOpacity={0.8}
+                  activeOpacity={0.85}
                 >
                   {endingRental ? (
                     <ActivityIndicator color="#FFFFFF" size="small" />
                   ) : (
                     <>
-                      <XCircle size={16} color="#FFFFFF" strokeWidth={2} />
+                      <XCircle size={18} color="#FFFFFF" strokeWidth={2.5} />
                       <Text style={styles.endRentalPrimaryButtonText}>Leave Immediately</Text>
                     </>
                   )}
@@ -4290,13 +4286,13 @@ HanapBahay Complaint System
                       ]}
                       onPress={() => handleConfirmEndRentalStay(false)}
                       disabled={endingRental}
-                      activeOpacity={0.7}
+                      activeOpacity={0.85}
                     >
                       {endingRental ? (
-                        <ActivityIndicator color={designTokens.colors.warning} size="small" />
+                        <ActivityIndicator color="#FFFFFF" size="small" />
                       ) : (
                         <>
-                          <Clock size={16} color={designTokens.colors.warning} strokeWidth={2} />
+                          <Clock size={18} color="#FFFFFF" strokeWidth={2.5} />
                           <Text style={styles.endRentalSecondaryButtonText}>Start Countdown</Text>
                         </>
                       )}
@@ -4715,6 +4711,20 @@ HanapBahay Complaint System
 
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               <View style={{ gap: designTokens.spacing.md }}>
+                {/* Info Alert */}
+                <View style={{ 
+                  backgroundColor: '#DBEAFE', 
+                  borderRadius: 8, 
+                  padding: 12,
+                  borderLeftWidth: 4,
+                  borderLeftColor: '#3B82F6'
+                }}>
+                  <Text style={{ color: '#1E40AF', fontWeight: '600', marginBottom: 4 }}>For Property Owners</Text>
+                  <Text style={{ color: '#1E3A8A', fontSize: 12 }}>
+                    This request will be sent to your property owner/landlord. Use this for any issues with your rental unit such as repairs, plumbing, electrical, or other property-related concerns.
+                  </Text>
+                </View>
+
                 {/* Title */}
                 <View>
                   <Text style={[styles.modalText, { marginBottom: designTokens.spacing.xs }]}>Title *</Text>
@@ -5515,6 +5525,20 @@ HanapBahay Complaint System
 
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
               <View style={{ gap: designTokens.spacing.md }}>
+                {/* Info Alert */}
+                <View style={{ 
+                  backgroundColor: '#FEE2E2', 
+                  borderRadius: 8, 
+                  padding: 12,
+                  borderLeftWidth: 4,
+                  borderLeftColor: '#EF4444'
+                }}>
+                  <Text style={{ color: '#991B1B', fontWeight: '600', marginBottom: 4 }}>For Brgy. Officials</Text>
+                  <Text style={{ color: '#7F1D1D', fontSize: 12 }}>
+                    This complaint will be sent directly to the barangay officials. Use this for neighborhood issues such as noise complaints, landlord disputes, safety concerns, or any matter requiring barangay intervention.
+                  </Text>
+                </View>
+
                 {/* Complaint Category */}
                 <View>
                   <Text style={[styles.modalText, { marginBottom: designTokens.spacing.xs }]}>Complaint Category *</Text>
@@ -8079,78 +8103,100 @@ const styles = StyleSheet.create({
   },
   // End Rental Stay Form Button Styles - Modern & Clean
   endRentalModalActions: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingTop: 16,
-    paddingBottom: 16,
-    paddingHorizontal: 20,
+    flexDirection: 'column',
+    gap: 14,
+    paddingTop: 24,
+    paddingBottom: 20,
+    paddingHorizontal: 24,
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
     backgroundColor: designTokens.colors.white,
   },
   endRentalCancelButton: {
-    flex: 1,
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
-    minHeight: 44,
-  },
-  endRentalCancelButtonText: {
-    fontSize: 15,
-    fontWeight: '600' as any,
-    color: '#374151',
-  },
-  endRentalSecondaryButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    gap: 6,
-    minHeight: 44,
-    backgroundColor: designTokens.colors.white,
-  },
-  endRentalWarningButton: {
-    borderColor: designTokens.colors.warning,
-  },
-  endRentalSecondaryButtonText: {
-    fontSize: 15,
-    fontWeight: '600' as any,
-    color: designTokens.colors.warning,
-  },
-  endRentalPrimaryButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    gap: 6,
-    minHeight: 44,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#E5E7EB',
+    minHeight: 56,
+    gap: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
     shadowRadius: 4,
     elevation: 2,
   },
+  endRentalCancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600' as any,
+    color: '#4B5563',
+    letterSpacing: 0.2,
+  },
+  endRentalSecondaryButton: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    gap: 10,
+    minHeight: 58,
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  endRentalWarningButton: {
+    backgroundColor: '#F59E0B',
+  },
+  endRentalSecondaryButtonText: {
+    fontSize: 17,
+    fontWeight: '700' as any,
+    color: '#FFFFFF',
+  },
+  endRentalPrimaryButton: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    gap: 10,
+    minHeight: 58,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
+  },
   endRentalDangerButton: {
-    backgroundColor: designTokens.colors.error,
+    backgroundColor: '#EF4444',
+  },
+  endRentalWarningButton: {
+    backgroundColor: '#F59E0B',
   },
   endRentalPrimaryButtonText: {
-    fontSize: 15,
-    fontWeight: '600' as any,
-    color: designTokens.colors.white,
+    fontSize: 17,
+    fontWeight: '700' as any,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  endRentalSecondaryButtonText: {
+    fontSize: 17,
+    fontWeight: '700' as any,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
   endRentalButtonDisabled: {
-    opacity: 0.5,
+    opacity: 0.6,
   },
 });
 

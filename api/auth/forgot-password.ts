@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { supabase } from '../../utils/supabase-client';
+import { db } from '../../utils/db';
 
 // Define the user type structure to match mock-auth.ts
 interface MockUser {
@@ -58,18 +59,18 @@ const generateResetToken = (): string => {
 // Function to store reset token with expiration
 const storeResetToken = async (email: string, token: string): Promise<void> => {
     try {
-        const resetTokensKey = 'password_reset_tokens';
-        const existingTokens = await AsyncStorage.getItem(resetTokensKey);
-        const tokens = existingTokens ? JSON.parse(existingTokens) : {};
+        const resetTokenId = `reset_token_${email.toLowerCase()}`;
         
         // Store token with 1 hour expiration
-        tokens[email.toLowerCase()] = {
+        const tokenData = {
+            id: resetTokenId,
+            email: email.toLowerCase(),
             token,
             expiresAt: Date.now() + (60 * 60 * 1000), // 1 hour from now
             createdAt: Date.now()
         };
         
-        await AsyncStorage.setItem(resetTokensKey, JSON.stringify(tokens));
+        await db.upsert('password_reset_tokens', resetTokenId, tokenData);
         console.log('✅ Password reset token stored for:', email);
     } catch (error) {
         console.error('❌ Error storing reset token:', error);
@@ -157,22 +158,15 @@ export async function forgotPassword(data: ForgotPasswordData) {
 // Function to verify reset token
 export async function verifyResetToken(email: string, token: string): Promise<boolean> {
     try {
-        const resetTokensKey = 'password_reset_tokens';
-        const existingTokens = await AsyncStorage.getItem(resetTokensKey);
+        const resetTokenId = `reset_token_${email.toLowerCase()}`;
+        const tokenData = await db.get<any>('password_reset_tokens', resetTokenId);
         
-        if (!existingTokens) {
-            return false;
-        }
-        
-        const tokens = JSON.parse(existingTokens);
-        const userToken = tokens[email.toLowerCase()];
-        
-        if (!userToken) {
+        if (!tokenData) {
             return false;
         }
         
         // Check if token matches and is not expired
-        if (userToken.token === token && userToken.expiresAt > Date.now()) {
+        if (tokenData.token === token && tokenData.expiresAt > Date.now()) {
             return true;
         }
         
@@ -196,20 +190,12 @@ export async function resetPasswordWithToken(email: string, token: string, newPa
             };
         }
         
-        // Update password in mock database
-        const storedUsers = await AsyncStorage.getItem(MOCK_USERS_KEY);
-        if (!storedUsers) {
-            return {
-                success: false,
-                error: 'User not found. Please create a new account.'
-            };
-        }
-        
-        const usersData = JSON.parse(storedUsers);
-        const mockUsers = new Map<string, MockUser>(Object.entries(usersData));
         const normalizedEmail = email.trim().toLowerCase();
         
-        const user = mockUsers.get(normalizedEmail);
+        // Get user from database
+        const allUsers = await db.list<MockUser>('users');
+        const user = allUsers.find(u => u.email.toLowerCase() === normalizedEmail);
+        
         if (!user) {
             return {
                 success: false,
@@ -219,20 +205,12 @@ export async function resetPasswordWithToken(email: string, token: string, newPa
         
         // Update password
         user.password = newPassword;
-        mockUsers.set(normalizedEmail, user);
-        
-        // Save updated users
-        const usersObject = Object.fromEntries(mockUsers);
-        await AsyncStorage.setItem(MOCK_USERS_KEY, JSON.stringify(usersObject));
+        user.updatedAt = new Date().toISOString();
+        await db.upsert('users', user.id, user);
         
         // Remove used reset token
-        const resetTokensKey = 'password_reset_tokens';
-        const existingTokens = await AsyncStorage.getItem(resetTokensKey);
-        if (existingTokens) {
-            const tokens = JSON.parse(existingTokens);
-            delete tokens[normalizedEmail];
-            await AsyncStorage.setItem(resetTokensKey, JSON.stringify(tokens));
-        }
+        const resetTokenId = `reset_token_${normalizedEmail}`;
+        await db.remove('password_reset_tokens', resetTokenId);
         
         console.log('✅ Password reset successfully for:', email);
         

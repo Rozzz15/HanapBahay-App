@@ -1240,7 +1240,7 @@ const goToNextPhoto = () => {
                   styles.bookButtonText, 
                   isMobile && styles.bookButtonTextMobile,
                   isOwner && styles.bookButtonTextDisabled
-                ]}>Book Now</Text>
+                ]}>Rent Now</Text>
               </TouchableOpacity>
             </View>
           )}

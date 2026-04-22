@@ -210,12 +210,31 @@ export default function PropertyVideoPlayer({
     } else {
       // Pause video when modal closes
       if (videoPlayer) {
-        videoPlayer.pause();
+        try {
+          videoPlayer.pause();
+        } catch (err) {
+          console.log('Error pausing video player:', err);
+        }
       }
       // Reset loading state when modal closes
       setIsLoading(false);
     }
   }, [visible, initialIndex, videoPlayer]);
+
+  // Cleanup video player on unmount
+  useEffect(() => {
+    return () => {
+      if (videoPlayer) {
+        try {
+          console.log('🧹 Cleaning up video player on unmount');
+          videoPlayer.pause();
+          videoPlayer.release();
+        } catch (err) {
+          console.log('Error releasing video player:', err);
+        }
+      }
+    };
+  }, [videoPlayer]);
 
   // Poll video player state to keep isPlaying in sync
   useEffect(() => {

@@ -52,6 +52,12 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { WebView } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system';
+
+// Type assertion for FileSystem directories
+const FS = FileSystem as typeof FileSystem & {
+  documentDirectory: string | null;
+  cacheDirectory: string | null;
+};
 import * as Sharing from 'expo-sharing';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 
@@ -89,6 +95,21 @@ export default function ComplaintsPage() {
     }
   );
 
+  // Cleanup video player on unmount
+  useEffect(() => {
+    return () => {
+      if (videoPlayer) {
+        try {
+          console.log('🧹 Cleaning up video player on unmount');
+          videoPlayer.pause();
+          videoPlayer.release();
+        } catch (err) {
+          console.log('Error releasing video player:', err);
+        }
+      }
+    };
+  }, [videoPlayer]);
+
   const loadComplaints = useCallback(async () => {
     if (!user?.id) return;
 
@@ -98,9 +119,18 @@ export default function ComplaintsPage() {
       // Get barangay name from user data
       const userRecord = await db.get<DbUserRecord>('users', user.id);
       const barangay = userRecord?.barangay || 'Unknown Barangay';
-      // Note: barangay name retrieved for fetching complaints, no need to store in state
+      console.log('🏢 Loading complaints for barangay:', barangay);
+      console.log('👤 User record:', { id: userRecord?.id, name: userRecord?.name, barangay: userRecord?.barangay });
 
       const barangayComplaints = await getComplaintsByBarangay(barangay);
+      console.log('📋 Found complaints:', barangayComplaints.length);
+      console.log('📋 Complaints data:', barangayComplaints.map(c => ({ 
+        id: c.id.slice(0, 8), 
+        category: c.category, 
+        status: c.status,
+        propertyId: c.propertyId,
+        tenantId: c.tenantId
+      })));
       setComplaints(barangayComplaints);
     } catch (error) {
       console.error('❌ Error loading complaints:', error);
@@ -199,7 +229,7 @@ export default function ComplaintsPage() {
       // Get file extension
       const fileExtension = documentUri.toLowerCase().endsWith('.pdf') ? 'pdf' : 'jpg';
       const fileName = `settlement_doc_${index + 1}_${Date.now()}.${fileExtension}`;
-      const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+      const fileUri = `${FS.documentDirectory || ''}${fileName}`;
       
       // Download the file
       const downloadResult = await FileSystem.downloadAsync(documentUri, fileUri);
@@ -242,7 +272,7 @@ export default function ComplaintsPage() {
         setDownloadingDocument(true);
         const fileExtension = documentUri.toLowerCase().endsWith('.pdf') ? 'pdf' : 'jpg';
         const tempFileName = fileName || `document_${Date.now()}.${fileExtension}`;
-        const tempUri = `${FileSystem.cacheDirectory}${tempFileName}`;
+        const tempUri = `${FS.cacheDirectory || ''}${tempFileName}`;
         
         const downloadResult = await FileSystem.downloadAsync(documentUri, tempUri);
         
@@ -829,11 +859,11 @@ export default function ComplaintsPage() {
                         <FileText size={18} color={designTokens.colors.primary} />
                       </View>
                       <Text style={styles.modernSectionTitle}>
-                        Settlement Documents ({complaintDetails.complaint.settlementDocuments.length})
+                        Settlement Documents ({complaintDetails.complaint.settlementDocuments?.length || 0})
                       </Text>
                     </View>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.modernMediaScroll}>
-                      {complaintDetails.complaint.settlementDocuments.map((docUri, index) => (
+                      {complaintDetails.complaint.settlementDocuments?.map((docUri, index) => (
                         <TouchableOpacity
                           key={index}
                           style={styles.modernDocumentThumbnail}
@@ -1101,7 +1131,7 @@ export default function ComplaintsPage() {
                 <TouchableOpacity
                   style={styles.documentViewerActionButton}
                   onPress={() => handleDownloadDocument(
-                    complaintDetails.complaint.settlementDocuments[selectedDocumentIndex],
+                    complaintDetails.complaint.settlementDocuments?.[selectedDocumentIndex] || '',
                     selectedDocumentIndex
                   )}
                   disabled={downloadingDocument}
@@ -1400,7 +1430,6 @@ const styles = StyleSheet.create({
     backgroundColor: designTokens.colors.background,
   },
   loadingText: {
-    marginTop: 12,
     fontSize: 14,
     fontWeight: designTokens.typography.semibold as any,
     color: designTokens.colors.textPrimary,

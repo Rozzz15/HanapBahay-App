@@ -32,8 +32,16 @@ const getStorage = () => {
 }
 
 // Get environment variables with safe fallbacks
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "https://your-project.supabase.co";
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "your-anon-key";
+// Try multiple sources: process.env first, then Expo Constants
+import Constants from 'expo-constants';
+
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 
+  Constants.expoConfig?.extra?.supabaseUrl || 
+  "https://your-project.supabase.co";
+
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 
+  Constants.expoConfig?.extra?.supabaseAnonKey || 
+  "your-anon-key";
 
 // Check if we have valid Supabase credentials
 const hasValidSupabaseConfig = SUPABASE_URL && 

@@ -167,10 +167,11 @@ export default function DashboardScreen() {
       const { data: publishedListings = [], error: listError } = await supabase.from('published_listings').select('*'); if (listError) { console.error('Error fetching listings:', listError); return; }
       const { savePropertyMedia } = await import('@/utils/media-storage');
 
-      console.log(`📊 Found ${publishedListings.length} published listings to check for media sync`);
+      const listings = publishedListings || [];
+      console.log(`📊 Found ${listings.length} published listings to check for media sync`);
 
       let syncedCount = 0;
-      for (const listing of publishedListings) {
+      for (const listing of listings) {
         try {
           // Type guard to ensure this is a PublishedListingRecord
           if (!isPublishedListingRecord(listing)) {

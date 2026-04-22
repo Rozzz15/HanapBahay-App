@@ -11,6 +11,7 @@ interface AuthUser {
   permissions: string[];
   name?: string;
   email?: string;
+  phone?: string;
   isOwnerApproved?: boolean;
 }
 

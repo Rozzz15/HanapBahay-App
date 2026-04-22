@@ -68,10 +68,13 @@ export default function PropertiesPage() {
       const bookingsMap = new Map<string, BookingRecord[]>();
       
       rawListings.forEach(listing => {
+        // Use the EXACT same filtering logic as the owner's getTenantsByOwner function
+        // to ensure the barangay sees the same tenant count as the owner
         const propertyBookings = allBookings.filter(
           booking => booking.propertyId === listing.id && 
                      booking.status === 'approved' && 
-                     booking.paymentStatus === 'paid'
+                     booking.paymentStatus === 'paid' &&
+                     !booking.isDeleted  // Critical: Exclude deleted bookings
         );
         if (propertyBookings.length > 0) {
           bookingsMap.set(listing.id, propertyBookings);
@@ -272,7 +275,12 @@ export default function PropertiesPage() {
   };
 
   const renderProperty = (listing: PublishedListingRecord) => {
+    // Get all approved and paid bookings for this property
+    // Show all bookings as-is to match what the owner sees (do not deduplicate by tenantId)
+    // Multiple bookings for the same tenant may represent different time periods or slots
     const tenants = propertyBookings.get(listing.id) || [];
+    
+    console.log(`🏠 [BRGY] Property ${listing.title}: ${tenants.length} tenant booking(s)`);
     
     return (
       <View
@@ -400,15 +408,7 @@ export default function PropertiesPage() {
                 {listing.address || 'Address not specified'}
               </Text>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-              <Text style={{
-                fontSize: designTokens.typography.base,
-                fontWeight: '700',
-                color: designTokens.colors.primary,
-              }}>
-                {formatCurrency(listing.monthlyRent || 0)}/mo
-              </Text>
-            </View>
+            
           </View>
         </TouchableOpacity>
       </View>
@@ -614,33 +614,7 @@ export default function PropertiesPage() {
                   </View>
                 </View>
 
-                {/* Pricing */}
-                <View style={{ marginBottom: designTokens.spacing.lg }}>
-                  <Text style={{
-                    fontSize: designTokens.typography.xs,
-                    fontWeight: '600',
-                    color: designTokens.colors.textSecondary,
-                    textTransform: 'uppercase',
-                    marginBottom: designTokens.spacing.sm,
-                    letterSpacing: 0.5,
-                  }}>
-                    Pricing
-                  </Text>
-                  <View style={{
-                    backgroundColor: designTokens.colors.background,
-                    borderRadius: 12,
-                    padding: designTokens.spacing.md,
-                  }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: designTokens.spacing.sm }}>
-                      <Text style={{ fontSize: designTokens.typography.sm, color: designTokens.colors.textSecondary }}>
-                        Monthly Rent
-                      </Text>
-                      <Text style={{ fontSize: designTokens.typography.lg, fontWeight: '700', color: designTokens.colors.primary }}>
-                        {formatCurrency(selectedProperty.monthlyRent || 0)}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
+                
 
                 {/* Tenant Information */}
                 <View style={{ marginBottom: designTokens.spacing.lg }}>
@@ -673,8 +647,6 @@ export default function PropertiesPage() {
                             backgroundColor: designTokens.colors.background,
                             borderRadius: 8,
                             padding: designTokens.spacing.sm,
-                            borderLeftWidth: 3,
-                            borderLeftColor: getBookingStatusColor(booking.status),
                           }}
                         >
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: designTokens.spacing.xs }}>
@@ -724,38 +696,7 @@ export default function PropertiesPage() {
                                 </Text>
                               </View>
                             </View>
-                            <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center', marginLeft: designTokens.spacing.xs }}>
-                              <View style={{
-                                backgroundColor: getBookingStatusColor(booking.status) + '20',
-                                paddingHorizontal: 6,
-                                paddingVertical: 2,
-                                borderRadius: 4,
-                              }}>
-                                <Text style={{
-                                  fontSize: designTokens.typography.xs,
-                                  fontWeight: '600',
-                                  color: getBookingStatusColor(booking.status),
-                                  textTransform: 'uppercase',
-                                }}>
-                                  {booking.status}
-                                </Text>
-                              </View>
-                              <View style={{
-                                backgroundColor: getPaymentStatusColor(booking.paymentStatus) + '20',
-                                paddingHorizontal: 6,
-                                paddingVertical: 2,
-                                borderRadius: 4,
-                              }}>
-                                <Text style={{
-                                  fontSize: designTokens.typography.xs,
-                                  fontWeight: '600',
-                                  color: getPaymentStatusColor(booking.paymentStatus),
-                                  textTransform: 'uppercase',
-                                }}>
-                                  {booking.paymentStatus}
-                                </Text>
-                              </View>
-                            </View>
+                            
                           </View>
                         </View>
                       ))}

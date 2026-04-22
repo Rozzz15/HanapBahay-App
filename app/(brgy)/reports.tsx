@@ -214,7 +214,7 @@ export default function ReportsPage() {
       const barangayPropertyIds = barangayListings.map(l => l.id);
       const barangayBookings = allBookings.filter(b => barangayPropertyIds.includes(b.propertyId));
       const paidBarangayBookings = barangayBookings.filter(b => 
-        b.status === 'approved' && b.paymentStatus === 'paid'
+        b.status === 'approved' && b.paymentStatus === 'paid' && !b.isDeleted
       );
       
       const approvedApplications = allApplications.filter(app => 
@@ -301,7 +301,7 @@ export default function ReportsPage() {
       const barangayPropertyIds = barangayListings.map(l => l.id);
       const barangayBookings = allBookings.filter(b => barangayPropertyIds.includes(b.propertyId));
       const paidBarangayBookings = barangayBookings.filter(b => 
-        b.status === 'approved' && b.paymentStatus === 'paid'
+        b.status === 'approved' && b.paymentStatus === 'paid' && !b.isDeleted
       );
       
       const approvedApplications = allApplications.filter(app => 
@@ -808,7 +808,7 @@ export default function ReportsPage() {
     <div class="stat-value">${analytics.totalProperties}</div>
   </div>
   <div class="stat-box">
-    <div class="stat-label">Total Bookings</div>
+    <div class="stat-label">Total Rents</div>
     <div class="stat-value">${analytics.totalBookings}</div>
   </div>
   <div class="stat-box">
@@ -892,7 +892,7 @@ export default function ReportsPage() {
     </tr>
   </table>
 
-  <h2>Booking Status</h2>
+  <h2>Rent Status</h2>
   <table>
     <tr>
       <th>Status</th>
@@ -949,10 +949,6 @@ export default function ReportsPage() {
       <th>Count</th>
     </tr>
     <tr>
-      <td>New Bookings</td>
-      <td>${analytics.recentActivity.newBookings}</td>
-    </tr>
-    <tr>
       <td>New Properties</td>
       <td>${analytics.recentActivity.newProperties}</td>
     </tr>
@@ -994,7 +990,7 @@ export default function ReportsPage() {
     <tr>
       <th>Rank</th>
       <th>Owner Name</th>
-      <th>Bookings</th>
+      <th>Rents</th>
     </tr>
     ${analytics.relationshipAnalytics.mostActiveOwners.map((owner, index) => `
     <tr>
@@ -1012,7 +1008,7 @@ export default function ReportsPage() {
     <tr>
       <th>Rank</th>
       <th>Tenant Name</th>
-      <th>Bookings</th>
+      <th>Rents</th>
     </tr>
     ${analytics.relationshipAnalytics.mostActiveTenants.map((tenant, index) => `
     <tr>
@@ -1590,7 +1586,7 @@ export default function ReportsPage() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                       <Text style={sharedStyles.statLabel}>👤 Individual</Text>
                       <Text style={sharedStyles.statLabel}>
-                        {analytics.tenantTypeAnalytics.individual ?? 0} {analytics.tenantTypeAnalytics.individual === 1 ? 'booking' : 'bookings'}
+                        {analytics.tenantTypeAnalytics.individual ?? 0} {analytics.tenantTypeAnalytics.individual === 1 ? 'rent' : 'rents'}
                       </Text>
                     </View>
                     <ProgressBar 
@@ -1604,7 +1600,7 @@ export default function ReportsPage() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                       <Text style={sharedStyles.statLabel}>👨‍👩‍👧‍👦 Family</Text>
                       <Text style={sharedStyles.statLabel}>
-                        {analytics.tenantTypeAnalytics.family ?? 0} {analytics.tenantTypeAnalytics.family === 1 ? 'booking' : 'bookings'}
+                        {analytics.tenantTypeAnalytics.family ?? 0} {analytics.tenantTypeAnalytics.family === 1 ? 'rent' : 'rents'}
                       </Text>
                     </View>
                     <ProgressBar 
@@ -1618,7 +1614,7 @@ export default function ReportsPage() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                       <Text style={sharedStyles.statLabel}>💑 Couple</Text>
                       <Text style={sharedStyles.statLabel}>
-                        {analytics.tenantTypeAnalytics.couple ?? 0} {analytics.tenantTypeAnalytics.couple === 1 ? 'booking' : 'bookings'}
+                        {analytics.tenantTypeAnalytics.couple ?? 0} {analytics.tenantTypeAnalytics.couple === 1 ? 'rent' : 'rents'}
                       </Text>
                     </View>
                     <ProgressBar 
@@ -1632,7 +1628,7 @@ export default function ReportsPage() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                       <Text style={sharedStyles.statLabel}>👥 Group/Shared</Text>
                       <Text style={sharedStyles.statLabel}>
-                        {analytics.tenantTypeAnalytics.group ?? 0} {analytics.tenantTypeAnalytics.group === 1 ? 'booking' : 'bookings'}
+                        {analytics.tenantTypeAnalytics.group ?? 0} {analytics.tenantTypeAnalytics.group === 1 ? 'rent' : 'rents'}
                       </Text>
                     </View>
                     <ProgressBar 
@@ -2033,142 +2029,9 @@ export default function ReportsPage() {
               </View>
             )}
 
-          {/* 4. BOOKING ANALYTICS - Clean Section */}
-          <View style={{ marginBottom: designTokens.spacing['2xl'] }}>
-            {/* Clean Section Header */}
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              marginBottom: designTokens.spacing.xl,
-              paddingLeft: designTokens.spacing.sm,
-            }}>
-              <View style={{
-                width: 4,
-                height: 24,
-                backgroundColor: '#8B5CF6',
-                borderRadius: 2,
-                marginRight: designTokens.spacing.md,
-              }} />
-              <Text style={{
-                fontSize: designTokens.typography.xl,
-                fontWeight: designTokens.typography.bold as any,
-                color: designTokens.colors.textPrimary,
-                letterSpacing: -0.3,
-              }}>
-                Booking Analytics
-              </Text>
-            </View>
+
             
-            {/* Booking Status - Clean Card */}
-            <View style={{
-              backgroundColor: designTokens.colors.white,
-              borderRadius: 12,
-              padding: designTokens.spacing.xl + designTokens.spacing.xs,
-              marginBottom: designTokens.spacing.lg,
-              marginHorizontal: designTokens.spacing.sm,
-              borderWidth: 1,
-              borderColor: designTokens.colors.borderLight,
-            }}>
-              <Text style={{
-                fontSize: designTokens.typography.lg,
-                fontWeight: designTokens.typography.bold as any,
-                color: designTokens.colors.textPrimary,
-                marginBottom: designTokens.spacing.lg,
-                letterSpacing: -0.3,
-              }}>
-                Booking Status Breakdown
-              </Text>
-
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 16 }}>
-                <StatusBadge status="Approved" count={analytics.approvedBookings} />
-                <StatusBadge status="Pending" count={analytics.pendingBookings} />
-                <StatusBadge status="Rejected" count={analytics.rejectedBookings} />
-                <StatusBadge status="Cancelled" count={analytics.cancelledBookings} />
-                <StatusBadge status="Completed" count={analytics.completedBookings} />
-              </View>
-
-              <View style={{ gap: 12 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={sharedStyles.statLabel}>✅ Approved</Text>
-                  <Text style={[sharedStyles.statLabel, { color: '#10B981' }]}>{analytics.approvedBookings}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={sharedStyles.statLabel}>⏳ Pending</Text>
-                  <Text style={[sharedStyles.statLabel, { color: '#F59E0B' }]}>{analytics.pendingBookings}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={sharedStyles.statLabel}>❌ Rejected</Text>
-                  <Text style={[sharedStyles.statLabel, { color: '#EF4444' }]}>{analytics.rejectedBookings}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={sharedStyles.statLabel}>🚫 Cancelled</Text>
-                  <Text style={[sharedStyles.statLabel, { color: '#6B7280' }]}>{analytics.cancelledBookings}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={sharedStyles.statLabel}>✅ Completed</Text>
-                  <Text style={[sharedStyles.statLabel, { color: '#10B981' }]}>{analytics.completedBookings}</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Booking Trends - Clean Card */}
-            <View style={{
-              backgroundColor: designTokens.colors.white,
-              borderRadius: 12,
-              padding: designTokens.spacing.xl + designTokens.spacing.xs,
-              marginBottom: designTokens.spacing.lg,
-              borderWidth: 1,
-              borderColor: designTokens.colors.borderLight,
-            }}>
-              <Text style={{
-                fontSize: designTokens.typography.lg,
-                fontWeight: designTokens.typography.bold as any,
-                color: designTokens.colors.textPrimary,
-                marginBottom: designTokens.spacing.lg,
-                letterSpacing: -0.3,
-              }}>
-                Booking Trends
-              </Text>
-
-              <View style={{ gap: 12 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={sharedStyles.statLabel}>This Month</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[sharedStyles.statLabel, { color: '#10B981', marginRight: 8 }]}>
-                      {analytics?.bookingTrends?.thisMonth ?? 0}
-                    </Text>
-                    <TrendIndicator value={analytics?.bookingTrends?.thisMonth ?? 0} />
-                  </View>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={sharedStyles.statLabel}>Last Month</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[sharedStyles.statLabel, { color: '#6B7280', marginRight: 8 }]}>
-                      {analytics?.bookingTrends?.lastMonth ?? 0}
-                    </Text>
-                    <TrendIndicator value={analytics?.bookingTrends?.lastMonth ?? 0} />
-                  </View>
-                </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={sharedStyles.statLabel}>Growth Rate</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[
-                      sharedStyles.statLabel, 
-                      { 
-                        color: (analytics?.bookingTrends?.growthRate ?? 0) >= 0 ? '#10B981' : '#EF4444',
-                        marginRight: 8 
-                      }
-                    ]}>
-                      {(analytics?.bookingTrends?.growthRate ?? 0) >= 0 ? '+' : ''}{analytics?.bookingTrends?.growthRate ?? 0}%
-                    </Text>
-                    <TrendIndicator value={analytics?.bookingTrends?.growthRate ?? 0} />
-                  </View>
-                </View>
-              </View>
-            </View>
-          </View>
-
-          {/* 5. ACTIVITY & ENGAGEMENT - Clean Section */}
+            {/* 5. ACTIVITY & ENGAGEMENT - Clean Section */}
           <View style={{ marginBottom: designTokens.spacing['2xl'] }}>
             {/* Clean Section Header */}
             <View style={{
@@ -2471,7 +2334,7 @@ export default function ReportsPage() {
                           </View>
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
                             <View style={{ flex: 1, minWidth: '45%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#FFFFFF', borderRadius: 8, borderWidth: 1, borderColor: '#E5E7EB' }}>
-                              <Text style={[sharedStyles.statLabel, { fontSize: 13, color: '#6B7280' }]}>Bookings</Text>
+                              <Text style={[sharedStyles.statLabel, { fontSize: 13, color: '#6B7280' }]}>Rents</Text>
                               <Text style={[sharedStyles.statLabel, { fontSize: 15, fontWeight: '600', color: '#10B981' }]}>
                                 {day.bookings}
                               </Text>
@@ -2576,7 +2439,6 @@ export default function ReportsPage() {
               }}>
                 {(() => {
                   const activityItems = [
-                    { label: 'New Bookings', value: activityData.newBookings, color: '#10B981', icon: Calendar },
                     { label: 'New Properties', value: activityData.newProperties, color: '#3B82F6', icon: Home },
                     { label: 'New Owners', value: activityData.newOwners, color: '#F59E0B', icon: Users },
                     { label: 'New Tenants', value: activityData.newTenants, color: '#EC4899', icon: Users },
@@ -3061,7 +2923,7 @@ export default function ReportsPage() {
                       color: designTokens.colors.textSecondary,
                       marginTop: 2,
                     }}>
-                      Ranked by booking activity
+                      Ranked by rent activity
                     </Text>
                   </View>
                 </View>
@@ -3181,7 +3043,7 @@ export default function ReportsPage() {
                       color: designTokens.colors.textSecondary,
                       marginTop: 2,
                     }}>
-                      Ranked by booking frequency
+                      Ranked by rent frequency
                     </Text>
                   </View>
                 </View>
@@ -3493,7 +3355,7 @@ export default function ReportsPage() {
                         fontWeight: designTokens.typography.medium as any,
                         color: designTokens.colors.textSecondary,
                       }}>
-                        Avg Bookings per Owner
+Avg Rents per Owner
                       </Text>
                     </View>
                     <Text style={{
@@ -3527,7 +3389,7 @@ export default function ReportsPage() {
                         fontWeight: designTokens.typography.medium as any,
                         color: designTokens.colors.textSecondary,
                       }}>
-                        Avg Bookings per Tenant
+Avg Rents per Tenant
                       </Text>
                     </View>
                     <Text style={{

@@ -1,5 +1,6 @@
 import { db, generateId } from './db';
 import { BookingRecord, PublishedListingRecord, MessageRecord, ConversationRecord } from '../types';
+import { createSafeConversationUpdate } from './conversation-update-helper';
 
 export interface RentPayment {
   id: string;
@@ -217,6 +218,167 @@ export function getDaysOverdue(dueDate: string): number {
   const diffTime = now.getTime() - due.getTime();
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   return Math.max(0, diffDays);
+}
+
+/**
+ * Check and remove approved bookings if initial payment is not completed within 7 days
+ * This ensures bookings are auto-cancelled if tenant doesn't pay within the deadline
+ */
+export async function removeUnpaidApprovedBookings(): Promise<{
+  removed: number;
+  errors: number;
+}> {
+  try {
+    const allBookings = await db.list<BookingRecord>('bookings');
+    const allPayments = await db.list<RentPayment>('rent_payments');
+    const now = new Date();
+    let removedCount = 0;
+    let errorCount = 0;
+
+    // Find approved bookings with pending initial payments that are past due date
+    const bookingsToRemove = allBookings.filter(booking => {
+      // Only check approved bookings that haven't been paid yet
+      if (booking.status !== 'approved' || booking.paymentStatus === 'paid') {
+        return false;
+      }
+
+      // Find the initial payment for this booking
+      const initialPayment = allPayments.find(
+        p => p.bookingId === booking.id && 
+        p.receiptNumber.startsWith('INITIAL-') &&
+        p.status === 'pending'
+      );
+
+      if (!initialPayment) {
+        return false;
+      }
+
+      // Check if payment is past due date (more than 7 days from approval)
+      const dueDate = new Date(initialPayment.dueDate);
+      const isPastDue = now > dueDate;
+      
+      if (isPastDue) {
+        console.log(`📅 Booking ${booking.id} has unpaid initial payment past due: dueDate=${initialPayment.dueDate}, now=${now.toISOString()}`);
+      }
+      
+      return isPastDue;
+    });
+
+    console.log(`🔄 Found ${bookingsToRemove.length} approved booking(s) with unpaid initial payment past due date`);
+
+    // Remove each booking
+    for (const booking of bookingsToRemove) {
+      try {
+        console.log(`🗑️ Removing booking ${booking.id} due to unpaid initial payment`);
+        
+        // Mark booking as rejected
+        const updatedBooking: BookingRecord = {
+          ...booking,
+          status: 'rejected',
+          rejectedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        await db.upsert('bookings', booking.id, updatedBooking);
+        
+        // Mark the payment as cancelled/rejected
+        const initialPayment = allPayments.find(
+          p => p.bookingId === booking.id && p.receiptNumber.startsWith('INITIAL-')
+        );
+        
+        if (initialPayment) {
+          const updatedPayment = {
+            ...initialPayment,
+            status: 'rejected' as const,
+            rejectedAt: now.toISOString(),
+            notes: (initialPayment.notes || '') + ' - Auto-rejected: Payment not completed within 7 days',
+            updatedAt: now.toISOString(),
+          };
+          await db.upsert('rent_payments', initialPayment.id, updatedPayment);
+        }
+        
+        removedCount++;
+        console.log(`✅ Removed booking ${booking.id} due to unpaid initial payment (past 7-day deadline)`);
+
+        // Notify tenant about auto-removal
+        try {
+          await sendBookingAutoRemovalNotification(booking);
+        } catch (notifError) {
+          console.warn('⚠️ Could not send auto-removal notification:', notifError);
+        }
+      } catch (error) {
+        console.error(`❌ Error removing booking ${booking.id}:`, error);
+        errorCount++;
+      }
+    }
+
+    if (removedCount > 0) {
+      console.log(`✅ Removed ${removedCount} approved booking(s) with unpaid initial payment`);
+    }
+
+    return {
+      removed: removedCount,
+      errors: errorCount,
+    };
+  } catch (error) {
+    console.error('❌ Error removing unpaid approved bookings:', error);
+    return {
+      removed: 0,
+      errors: 1,
+    };
+  }
+}
+
+/**
+ * Send notification to tenant about booking auto-removal
+ */
+async function sendBookingAutoRemovalNotification(booking: BookingRecord): Promise<void> {
+  try {
+    const { createOrFindConversation } = await import('./conversation-utils');
+    
+    const messageText = `⚠️ Booking Auto-Removed\n\n` +
+      `Your booking request for "${booking.propertyTitle}" has been automatically removed because the initial payment was not completed within 7 days from approval.\n\n` +
+      `Property: ${booking.propertyTitle}\n` +
+      `Location: ${booking.propertyAddress}\n` +
+      `Monthly Rent: ₱${booking.monthlyRent.toLocaleString()}\n\n` +
+      `You can submit a new booking request if you're still interested in this property.`;
+
+    const conversationId = await createOrFindConversation({
+      ownerId: booking.ownerId,
+      tenantId: booking.tenantId,
+    });
+
+    const messageId = generateId('msg');
+    const now = new Date().toISOString();
+
+    const messageRecord: MessageRecord = {
+      id: messageId,
+      conversationId,
+      senderId: booking.ownerId,
+      text: messageText,
+      createdAt: now,
+      type: 'notification',
+    };
+
+    await db.upsert('messages', messageId, messageRecord);
+
+    // Update conversation
+    const conversation = await db.get<ConversationRecord>('conversations', conversationId);
+    if (conversation) {
+      const safeUpdate = createSafeConversationUpdate(conversation, {
+        lastMessageText: messageText.substring(0, 100),
+        lastMessageAt: now,
+        unreadByTenant: (conversation.unreadByTenant || 0) + 1,
+        updatedAt: now,
+      });
+      await db.upsert('conversations', conversationId, safeUpdate);
+    }
+
+    console.log('✅ Booking auto-removal notification sent to tenant');
+  } catch (error) {
+    console.error('❌ Error sending booking auto-removal notification:', error);
+    throw error;
+  }
 }
 
 /**
@@ -705,13 +867,18 @@ export async function getRentHistorySummary(tenantId: string, bookingId?: string
 
     let nextDueDate: string | undefined;
     if (activeBooking) {
+      // CRITICAL FIX: Include both 'paid' and 'pending_owner_confirmation' when calculating next due date
+      // If tenant has paid but owner hasn't confirmed yet, the tenant should still see the next month as due
+      // This prevents showing the current month as due when tenant has already paid it
+      // IMPORTANT: Sort by dueDate (not paidDate) to get the LATEST MONTH that was paid
+      // This ensures if February is paid (dueDate = Feb 19), the next due will be March 19
       const lastPaidPayment = payments
-        .filter(p => p.status === 'paid')
-        .sort((a, b) => new Date(b.paidDate || '').getTime() - new Date(a.paidDate || '').getTime())[0];
+        .filter(p => p.status === 'paid' || p.status === 'pending_owner_confirmation')
+        .sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime())[0];
       
       nextDueDate = getNextDueDate(
         activeBooking.startDate,
-        lastPaidPayment?.paidDate
+        lastPaidPayment?.dueDate
       );
     }
 
@@ -744,11 +911,12 @@ export async function getRentHistorySummary(tenantId: string, bookingId?: string
         return true;
       }
       
-      // For pending/pending_owner_confirmation payments, ALWAYS SHOW THEM
-      // Tenant should see all their upcoming payment obligations
-      // The "7 days before" reminder is separate - this is just showing the payment in the list
+      // For pending/pending_owner_confirmation payments, only show within 7 days of due date
+      // This prevents showing all future months at once and overwhelming the tenant
       if (payment.status === 'pending' || payment.status === 'pending_owner_confirmation') {
-        return true; // Show ALL pending payments, including future months
+        const dueDate = new Date(payment.dueDate);
+        const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        return dueDate <= sevenDaysFromNow; // Only show if due within 7 days
       }
       
       // Exclude all other statuses and future payments
@@ -945,13 +1113,13 @@ async function sendPaymentNotificationToOwner(payment: RentPayment): Promise<voi
     // Update conversation
     const conversation = await db.get<ConversationRecord>('conversations', conversationId);
     if (conversation) {
-      await db.upsert('conversations', conversationId, {
-        ...conversation,
+      const safeUpdate = createSafeConversationUpdate(conversation, {
         lastMessageText: messageText.substring(0, 100),
         lastMessageAt: now,
         unreadByOwner: (conversation.unreadByOwner || 0) + 1,
         updatedAt: now,
       });
+      await db.upsert('conversations', conversationId, safeUpdate);
     }
 
     console.log('✅ Payment notification sent to owner');
@@ -1074,11 +1242,11 @@ export async function getPaymentRemindersForOwner(ownerId: string): Promise<Paym
         // Get next due date
         const lastPaidPayment = bookingPayments
           .filter(p => p.status === 'paid')
-          .sort((a, b) => new Date(b.paidDate || '').getTime() - new Date(a.paidDate || '').getTime())[0];
+          .sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime())[0];
         
         const nextDueDate = getNextDueDate(
           booking.startDate,
-          lastPaidPayment?.paidDate
+          lastPaidPayment?.dueDate
         );
         const nextDue = new Date(nextDueDate);
 
@@ -1137,7 +1305,10 @@ export async function getPaymentRemindersForOwner(ownerId: string): Promise<Paym
  */
 export async function checkAndSendPaymentDueDateNotifications(): Promise<void> {
   try {
-    // First, update any payments that are now overdue
+    // First, remove approved bookings with unpaid initial payments past 7-day deadline
+    await removeUnpaidApprovedBookings();
+    
+    // Then, update any payments that are now overdue
     await updateOverduePayments();
     
     const now = new Date();
@@ -1158,11 +1329,11 @@ export async function checkAndSendPaymentDueDateNotifications(): Promise<void> {
         // Get next due date
         const lastPaidPayment = bookingPayments
           .filter(p => p.status === 'paid')
-          .sort((a, b) => new Date(b.paidDate || '').getTime() - new Date(a.paidDate || '').getTime())[0];
+          .sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime())[0];
         
         const nextDueDate = getNextDueDate(
           booking.startDate,
-          lastPaidPayment?.paidDate
+          lastPaidPayment?.dueDate
         );
         const nextDue = new Date(nextDueDate);
 
@@ -1359,11 +1530,11 @@ export async function getPaymentReminders(tenantId: string): Promise<PaymentRemi
     // Get next due date
     const lastPaidPayment = bookingPayments
       .filter(p => p.status === 'paid')
-      .sort((a, b) => new Date(b.paidDate || '').getTime() - new Date(a.paidDate || '').getTime())[0];
+      .sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime())[0];
     
     const nextDueDate = getNextDueDate(
       activeBooking.startDate,
-      lastPaidPayment?.paidDate
+      lastPaidPayment?.dueDate
     );
     const nextDue = new Date(nextDueDate);
 
@@ -1484,6 +1655,32 @@ export async function initializeMonthlyPayments(bookingId: string): Promise<void
 }
 
 /**
+ * Filter payments to only show those that are within 7 days of their due date
+ * This prevents showing all future months at once
+ */
+export function filterPaymentsWithin7Days(payments: RentPayment[]): RentPayment[] {
+  const now = new Date();
+  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  
+  return payments.filter(payment => {
+    // Always show paid, pending_owner_confirmation, and overdue payments
+    if (payment.status === 'paid' || 
+        payment.status === 'pending_owner_confirmation' || 
+        payment.status === 'overdue') {
+      return true;
+    }
+    
+    // For pending payments, only show if due date is within 7 days
+    if (payment.status === 'pending') {
+      const dueDate = new Date(payment.dueDate);
+      return dueDate <= sevenDaysFromNow;
+    }
+    
+    return false;
+  });
+}
+
+/**
  * Get future payment months available for advanced payment
  * Returns up to 6 months in advance
  */
@@ -1500,13 +1697,13 @@ export async function getFuturePaymentMonths(bookingId: string, maxMonths: numbe
     
     // Find the last paid payment to determine where to start
     const lastPaidPayment = paidPayments.sort(
-      (a, b) => new Date(b.paidDate || '').getTime() - new Date(a.paidDate || '').getTime()
+      (a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime()
     )[0];
     
     // Calculate next due date
     const nextDueDate = getNextDueDate(
       booking.startDate,
-      lastPaidPayment?.paidDate
+      lastPaidPayment?.dueDate
     );
     
     const startDate = new Date(booking.startDate);

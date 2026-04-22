@@ -36,7 +36,7 @@ export async function getMonthlyRevenueOverview(
     const allBookings = await db.list<any>('bookings');
     const activeBookings = allBookings.filter(
       b => b.ownerId === ownerId && 
-      b.status === 'approved' &&
+      (b.status === 'approved' || b.status === 'completed') && // Include both active and completed rentals
       !b.isDeleted && // Exclude soft-deleted bookings
       b.status !== 'rejected' && // Exclude rejected bookings
       b.status !== 'cancelled' // Exclude cancelled bookings

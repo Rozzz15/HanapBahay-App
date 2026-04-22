@@ -118,14 +118,14 @@ export default function BookingsPage() {
     // Get booking details for confirmation message
     const booking = bookings.find(b => b.id === bookingId);
     if (!booking) {
-      showAlert('Error', 'Booking not found');
+      showAlert('Error', 'Rent not found');
       return;
     }
 
     // Show confirmation alert before accepting
     if (action === 'approve') {
       Alert.alert(
-        'Confirm Booking Approval',
+        'Confirm Rent Approval',
         `Are you sure you want to approve the booking from ${booking.tenantName} for ${booking.propertyTitle}?\n\n` +
         `This will:\n` +
         `• Reserve the property slot for this tenant\n` +
@@ -148,7 +148,7 @@ export default function BookingsPage() {
                 if (success) {
                   showAlert(
                     'Success', 
-                    `Booking approved successfully! The tenant has been notified.`
+                    `Rent request approved successfully! The tenant has been notified.`
                   );
                   
                   // Send notification message to tenant with payment details
@@ -177,7 +177,7 @@ export default function BookingsPage() {
                 }
               } catch (error) {
                 console.error('Error approving booking:', error);
-                showAlert('Error', 'Failed to approve booking');
+                showAlert('Error', 'Failed to approve rent');
               }
             }
           }
@@ -186,7 +186,7 @@ export default function BookingsPage() {
     } else {
       // For rejection, show confirmation as well
       Alert.alert(
-        'Confirm Booking Rejection',
+        'Confirm Rent Rejection',
         `Are you sure you want to reject the booking from ${booking.tenantName} for ${booking.propertyTitle}?\n\n` +
         `This will notify the tenant that their booking has been declined.`,
         [
@@ -205,7 +205,7 @@ export default function BookingsPage() {
                 if (success) {
                   showAlert(
                     'Success', 
-                    `Booking rejected successfully`
+                    `Rent request rejected successfully`
                   );
                   
                   // Send notification message to tenant
@@ -234,7 +234,7 @@ export default function BookingsPage() {
                 }
               } catch (error) {
                 console.error('Error rejecting booking:', error);
-                showAlert('Error', 'Failed to reject booking');
+                showAlert('Error', 'Failed to reject rent');
               }
             }
           }
@@ -305,8 +305,8 @@ export default function BookingsPage() {
 
   const handleDeleteBooking = (booking: BookingRecord) => {
     Alert.alert(
-      'Delete Booking Request',
-      `Are you sure you want to delete the booking request from ${booking.tenantName} for ${booking.propertyTitle}?`,
+      'Delete Rent Request',
+      `Are you sure you want to delete the rent request from ${booking.tenantName} for ${booking.propertyTitle}?`,
       [
         {
           text: 'Cancel',
@@ -327,11 +327,11 @@ export default function BookingsPage() {
                 // Refresh the pending bookings count in the navigation badge
                 refreshPendingBookings();
               } else {
-                showAlert('Error', 'Failed to delete booking request');
+                showAlert('Error', 'Failed to delete rent request');
               }
             } catch (error) {
               console.error('Error deleting booking:', error);
-              showAlert('Error', 'Failed to delete booking request');
+              showAlert('Error', 'Failed to delete rent request');
             }
           }
         }
@@ -382,8 +382,8 @@ export default function BookingsPage() {
           {/* Header */}
           <View style={sharedStyles.pageHeader}>
             <View style={sharedStyles.headerLeft}>
-              <Text style={sharedStyles.pageTitle}>Booking Management</Text>
-              <Text style={sharedStyles.pageSubtitle}>{stats.total} booking request{stats.total !== 1 ? 's' : ''}</Text>
+              <Text style={sharedStyles.pageTitle}>Rent Management</Text>
+              <Text style={sharedStyles.pageSubtitle}>{stats.total} rent request{stats.total !== 1 ? 's' : ''}</Text>
             </View>
             <View style={sharedStyles.headerRight}>
               {/* View Mode Selector */}
@@ -431,7 +431,7 @@ export default function BookingsPage() {
                     </View>
                   </View>
                   <Text style={sharedStyles.statValue}>{stats.total}</Text>
-                  <Text style={sharedStyles.statLabel}>Total Bookings</Text>
+                  <Text style={sharedStyles.statLabel}>Total Rents</Text>
                 </View>
               </View>
               
@@ -502,7 +502,7 @@ export default function BookingsPage() {
             </ScrollView>
           </View>
 
-          {/* Bookings List */}
+          {/* Rent List */}
           {loading ? (
             <View style={sharedStyles.loadingContainer}>
               <Text style={sharedStyles.loadingText}>Loading bookings...</Text>
@@ -510,11 +510,11 @@ export default function BookingsPage() {
           ) : filteredBookings.length === 0 ? (
             <View style={sharedStyles.emptyState}>
               <Calendar size={48} color={designTokens.colors.textMuted} />
-              <Text style={sharedStyles.emptyStateTitle}>No bookings found</Text>
+              <Text style={sharedStyles.emptyStateTitle}>No rents found</Text>
               <Text style={sharedStyles.emptyStateText}>
                 {filter === 'all' 
-                  ? 'Booking requests from tenants will appear here'
-                  : `No ${filter} bookings found`
+                  ? 'Rent requests from tenants will appear here'
+                  : `No ${filter} rents found`
                 }
               </Text>
             </View>
@@ -807,7 +807,7 @@ export default function BookingsPage() {
                                       console.warn('⚠️ Could not dispatch events:', eventError);
                                     }
                                     
-                                    showAlert('Success', 'Booking marked as paid. Tenant has been added to your tenants list.');
+                                    showAlert('Success', 'Rent marked as paid. Tenant has been added to your tenants list.');
                                     loadBookings();
                                   } catch (error) {
                                     console.error('❌ Error marking booking as paid:', error);
@@ -1012,7 +1012,7 @@ export default function BookingsPage() {
                                             console.warn('⚠️ Could not dispatch events:', eventError);
                                           }
                                           
-                                          showAlert('Success', 'Booking marked as paid. Tenant has been added to your tenants list.');
+                                          showAlert('Success', 'Rent marked as paid. Tenant has been added to your tenants list.');
                                           loadBookings();
                                         } catch (error) {
                                           console.error('❌ Error marking booking as paid:', error);

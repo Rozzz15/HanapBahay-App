@@ -65,12 +65,15 @@ CREATE INDEX IF NOT EXISTS idx_rent_payments_payment_month
 
 -- Create trigger to auto-update updatedAt
 CREATE OR REPLACE FUNCTION update_rent_payments_updated_at()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
     NEW.updatedAt = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 DROP TRIGGER IF EXISTS update_rent_payments_updated_at_trigger ON public.rent_payments;
 

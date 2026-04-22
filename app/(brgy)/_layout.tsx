@@ -79,7 +79,6 @@ export default function BrgyLayout() {
             <Stack.Screen name="properties" />
             <Stack.Screen name="reports" />
             <Stack.Screen name="settings" />
-            <Stack.Screen name="owner-applications" />
             <Stack.Screen name="approved-owners" />
             <Stack.Screen name="ratings" />
             <Stack.Screen name="complaints" />

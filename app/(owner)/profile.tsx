@@ -24,6 +24,7 @@ import { sharedStyles, designTokens, iconBackgrounds } from '../../styles/owner-
 import { showAlert } from '../../utils/alert';
 import { saveUserProfilePhoto, loadUserProfilePhoto } from '../../utils/user-profile-photos';
 import { db } from '../../utils/db';
+import { supabase } from '../../utils/supabase-client';
 import { changePassword } from '../../api/auth/change-password';
 
 export default function OwnerProfile() {
@@ -387,6 +388,88 @@ export default function OwnerProfile() {
       await db.upsert('users', user.id, updatedUser);
       console.log('✅ Updated owner profile in database:', { name: trimmedName, email: isChangingEmail ? trimmedNewEmail : userRecord.email });
       
+      // CRITICAL: Update Supabase Auth email if changing email
+      if (isChangingEmail) {
+        console.log('📧 Updating Supabase Auth email from', trimmedOldEmail, 'to', trimmedNewEmail);
+        const { data: authData, error: authUpdateError } = await supabase.auth.updateUser({
+          email: trimmedNewEmail
+        });
+        
+        if (authUpdateError) {
+          console.error('❌ Failed to update Supabase Auth email:', authUpdateError);
+          
+          // Handle rate limit error specifically
+          if (authUpdateError.message?.includes('rate limit')) {
+            showAlert(
+              'Rate Limit Exceeded', 
+              'You have changed your email too recently. Please wait at least 60 seconds between email changes. Please try again in a few minutes.'
+            );
+          } else {
+            showAlert(
+              'Email Update Failed', 
+              `Failed to update email in authentication system: ${authUpdateError.message || 'Unknown error'}. Your profile has not been changed.`
+            );
+          }
+          return;
+        }
+        
+        console.log('✅ Successfully updated Supabase Auth email');
+        console.log('📧 Supabase Auth data:', authData);
+        
+        // Check if email confirmation is required
+        if (authData?.user && authData.user.email !== trimmedNewEmail) {
+          console.log('⚠️ Email confirmation required - confirmation email sent to:', trimmedNewEmail);
+        }
+      }
+      
+      // IMPORTANT: Also update owner_profiles table and Supabase
+      try {
+        // Update local owner_profiles
+        const ownerProfile = await db.get('owner_profiles', user.id);
+        if (ownerProfile) {
+          const updatedOwnerProfile = {
+            ...ownerProfile,
+            businessName: trimmedName,
+            ...(isChangingEmail && { email: trimmedNewEmail }),
+          };
+          await db.upsert('owner_profiles', user.id, updatedOwnerProfile);
+          console.log('✅ Updated owner_profiles table');
+        }
+        
+        // Update Supabase owner_profiles
+        const { error: ownerUpdateError } = await supabase
+          .from('owner_profiles')
+          .update({
+            business_name: trimmedName,
+            ...(isChangingEmail && { email: trimmedNewEmail }),
+          })
+          .eq('user_id', user.id);
+        
+        if (ownerUpdateError) {
+          console.warn('⚠️ Could not update Supabase owner_profiles:', ownerUpdateError);
+        } else {
+          console.log('✅ Updated Supabase owner_profiles');
+        }
+        
+        // Update Supabase users table
+        const { error: supabaseUserError } = await supabase
+          .from('users')
+          .update({
+            name: trimmedName,
+            ...(isChangingEmail && { email: trimmedNewEmail }),
+            updated_at: updatedUser.updatedAt
+          })
+          .eq('id', user.id);
+        
+        if (supabaseUserError) {
+          console.warn('⚠️ Could not update Supabase users:', supabaseUserError);
+        } else {
+          console.log('✅ Updated Supabase users table');
+        }
+      } catch (profileError) {
+        console.warn('⚠️ Could not update profile tables:', profileError);
+      }
+      
       // Update mock auth storage - handle email change properly
       try {
         const { updateMockUser } = await import('../../utils/mock-auth');
@@ -451,8 +534,8 @@ export default function OwnerProfile() {
         // Close modal first, then show alert and sign out
         setTimeout(async () => {
           showAlert(
-            'Success', 
-            'Profile updated successfully! You will be logged out to apply the email change. Please log in again with your new email address.',
+            'Email Updated Successfully', 
+            'Your email has been changed! A confirmation email has been sent to your new address. You will now be logged out. Please check your email and confirm, then log in with your new email address and current password.',
             [
               {
                 text: 'OK',
@@ -1464,7 +1547,7 @@ function HelpSupportAI({ visible, onClose, userName, userId, userRole }: HelpSup
     }
     
     if (lowerMessage.includes('booking') || lowerMessage.includes('reservation') || lowerMessage.includes('tenant') || lowerMessage.includes('approve') || lowerMessage.includes('reject')) {
-      return `Managing bookings:\n\n• View all bookings in the "Bookings" section\n• Approve or reject booking requests\n• Track payment status\n• Communicate with tenants through Messages\n• View tenant profiles in "My Tenants"\n\nYou'll receive notifications for new booking requests. Always review tenant details before approving.\n\n💡 Tip: Check tenant ratings and previous booking history to make informed decisions.`;
+      return `Managing rents:\n\n• View all rents in the "Rents" section\n• Approve or reject rent requests\n• Track payment status\n• Communicate with tenants through Messages\n• View tenant profiles in "My Tenants"\n\nYou'll receive notifications for new rent requests. Always review tenant details before approving.\n\n💡 Tip: Check tenant ratings and previous rent history to make informed decisions.`;
     }
     
     if (lowerMessage.includes('pending') || lowerMessage.includes('waiting')) {

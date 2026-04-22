@@ -332,52 +332,10 @@ export default function OwnerDashboard() {
         return;
       }
 
-      // Check if owner application is approved - parallelize checks for faster loading
+      // Skip approval check - owners are auto-approved on signup
       try {
-        // Parallelize approval checks and application fetch
-        const [isApproved, hasPending, application] = await Promise.all([
-          isOwnerApproved(user.id),
-          hasPendingOwnerApplication(user.id),
-          getOwnerApplication(user.id)
-        ]);
-        
-        if (!isApproved) {
-          const barangay = application?.barangay || '';
-          
-          // Get Barangay official contact info (can be done in parallel with modal setup)
-          const brgyContactPromise = barangay ? getBarangayOfficialContact(barangay) : Promise.resolve(null);
-          
-          if (hasPending) {
-            // Build message with contact info
-            let message = 'Your Owner Application is still under review.\n\nYou will be notified once it is approved.';
-            
-            // Wait for contact info before showing modal
-            const brgyContact = await brgyContactPromise;
-            
-            setApplicationModalData({
-              title: 'Application Pending',
-              message: message,
-              brgyContact: brgyContact,
-              barangay: barangay
-            });
-            setShowApplicationModal(true);
-          } else {
-            // Build message with contact info
-            let message = 'Your owner application has not been approved yet. Please contact your Barangay official for assistance.';
-            
-            // Wait for contact info before showing modal
-            const brgyContact = await brgyContactPromise;
-            
-            setApplicationModalData({
-              title: 'Access Denied',
-              message: message,
-              brgyContact: brgyContact,
-              barangay: barangay
-            });
-            setShowApplicationModal(true);
-          }
-          return;
-        }
+        // Load dashboard data immediately without approval check
+        const application = await getOwnerApplication(user.id);
         
         // If approved, load dashboard data and profile photo in parallel
         Promise.all([
@@ -575,11 +533,12 @@ export default function OwnerDashboard() {
       
       // First, verify database storage
       const { db, generateId } = await import('../../utils/db');
-      const { data: allPublishedListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); }
-      const ownerListings = allPublishedListings.filter((listing: any) => listing.userId === user.id);
+      const { data: allPublishedListings, error: listingsError } = await supabase.from('published_listings').select('*'); 
+      if (listingsError) { console.error('Error fetching listings:', listingsError); }
+      const ownerListings = (allPublishedListings || []).filter((listing: any) => listing.userId === user.id);
       
       console.log('📊 Owner Listings Database Test:', {
-        totalPublishedListings: allPublishedListings.length,
+        totalPublishedListings: allPublishedListings?.length || 0,
         ownerListingsCount: ownerListings.length,
         ownerId: user.id,
         listingsData: ownerListings.map((listing: any) => {
@@ -1637,7 +1596,7 @@ export default function OwnerDashboard() {
                   </View>
                 )}
               </View>
-              <Text style={[sharedStyles.statLabel, { marginBottom: designTokens.spacing.xs }]}>Bookings</Text>
+              <Text style={[sharedStyles.statLabel, { marginBottom: designTokens.spacing.xs }]}>Rents</Text>
               <Text style={[sharedStyles.statValue, { fontSize: designTokens.typography['2xl'], marginBottom: 0 }]}>
                 {stats.totalBookings}
               </Text>
@@ -2312,9 +2271,9 @@ export default function OwnerDashboard() {
           <View style={[sharedStyles.statIcon, iconBackgrounds.orange, { marginBottom: designTokens.spacing.lg }]}>
             <Calendar size={32} color="#F59E0B" />
           </View>
-          <Text style={sharedStyles.emptyStateTitle}>No bookings yet</Text>
+          <Text style={sharedStyles.emptyStateTitle}>No rents yet</Text>
           <Text style={sharedStyles.emptyStateText}>
-            Booking requests from tenants will appear here
+            Rent requests from tenants will appear here
           </Text>
         </View>
       ) : (

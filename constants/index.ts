@@ -8,7 +8,7 @@ export const APP_VERSION = '1.0.0';
 // API Constants
 // Production cloud backend URL (always used for APK builds)
 // For local development, set EXPO_PUBLIC_API_URL in .env file
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://web-production-e66fb.up.railway.app';
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://v-production-6704.up.railway.app';
 
 // Log the API URL being used (helpful for debugging in mobile apps)
 if (__DEV__) {

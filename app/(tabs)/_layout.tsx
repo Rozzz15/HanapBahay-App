@@ -325,6 +325,7 @@ export default function TabLayout() {
                     <Tabs.Screen
                         name="bookings"
                         options={{
+                            tabBarLabel: 'Rent',
                             tabBarIcon: ({ color, focused }) => (
                                 <View style={{ position: 'relative' }}>
                                     <Calendar size={22} color={focused ? '#10B981' : '#9ca3af'} />

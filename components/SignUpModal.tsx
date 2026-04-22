@@ -294,13 +294,23 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
             if (selectedRole === 'owner' && ownerDocuments.length > 0) {
                 console.log('📤 Uploading owner verification documents to Supabase Storage...');
                 try {
-                    const { uploadOwnerDocuments } = await import('@/utils/supabase-storage');
+                    // Try enhanced upload first, fall back to regular if not available
+                    let uploadFunction;
+                    try {
+                        const enhanced = await import('@/utils/supabase-storage-enhanced');
+                        uploadFunction = enhanced.uploadOwnerDocumentsEnhanced;
+                        console.log('✅ Using enhanced upload with retry logic');
+                    } catch {
+                        const regular = await import('@/utils/supabase-storage');
+                        uploadFunction = regular.uploadOwnerDocuments;
+                        console.log('✅ Using regular upload function');
+                    }
                     
                     // We'll upload with a temporary ID first, then update with real userId after signup
                     const tempUserId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
                     
                     // Upload documents to Supabase Storage
-                    uploadedDocuments = await uploadOwnerDocuments(
+                    uploadedDocuments = await uploadFunction(
                         ownerDocuments.map(doc => ({ uri: doc.uri, name: doc.name })),
                         tempUserId
                     );
@@ -309,9 +319,15 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                 } catch (uploadError) {
                     console.error('❌ Failed to upload documents:', uploadError);
                     setIsSubmitting(false);
+                    
+                    // Provide more helpful error message
+                    const errorMessage = uploadError instanceof Error 
+                        ? uploadError.message 
+                        : 'Failed to upload documents. Please check your internet connection and try again.';
+                    
                     showSimpleAlert(
                         'Upload Failed',
-                        'Failed to upload documents. Please check your internet connection and try again.'
+                        errorMessage
                     );
                     return;
                 }
@@ -349,26 +365,32 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                 const userId = (result as any).user?.id || (result as any).id;
                 const isOwner = Array.isArray(roles) && roles.includes('owner');
                 
-                // Close the modal first
-                onClose();
-                if (onSignUpSuccess) {
-                    onSignUpSuccess();
-                }
-                
-                // Show appropriate alert message based on role
+                // Show appropriate alert message based on role BEFORE closing modal
                 if (isOwner) {
-                    // For owners: Show alert and stay on login screen
-                    showSimpleAlert(
-                        'Account Created Successfully! 🎉',
-                        'Your owner account has been created and your application has been submitted to your Barangay for approval.\n\nYou will receive a notification once your application is approved. Please log in after approval to access your owner dashboard.'
-                    );
-                    // DO NOT redirect - keep them on login screen
+                    // For owners: Auto-approved - don't close modal until redirect is ready
+                    toast.show('Account Created! Welcome to HanapBahay! 🎉');
+                    // Wait then redirect - don't close modal yet
+                    setTimeout(async () => {
+                        // Now close modal and redirect
+                        onClose();
+                        if (onSignUpSuccess) {
+                            onSignUpSuccess();
+                        }
+                        // Navigate to owner dashboard directly
+                        router.replace('/(owner)/dashboard');
+                    }, 500);
+                    return;
                 } else {
+                    // For tenants: Close modal and redirect normally
+                    onClose();
+                    if (onSignUpSuccess) {
+                        onSignUpSuccess();
+                    }
                     // For tenants: Show success message and redirect
                     toast.show('Account Created! Welcome to HanapBahay! 🎉');
                     // Small delay before redirect
                     setTimeout(() => {
-                        redirectTenantToTabs(userId);
+                        redirectTenantToTabs();
                     }, 500);
                 }
             } else {
@@ -431,7 +453,7 @@ export default function SignUpModal({ visible, onClose, onSignUpSuccess, onSwitc
                                 <View style={styles.header}>
                                     <View style={styles.logoContainer}>
                                         <Image 
-                                            source={require('../assets/images/LOPEZ.jpg')}
+                                            source={require('../assets/images/Hanapbahay Logo.png')}
                                             style={styles.logoImage}
                                             resizeMode="contain"
                                         />

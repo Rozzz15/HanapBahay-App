@@ -465,9 +465,14 @@ export async function getComprehensiveAnalytics(barangay: string): Promise<Compr
     };
     
     barangayListings.forEach(listing => {
-      // Get status and normalize (handle null/undefined, case-insensitive)
+      // Get status and normalize (handle null/undefined, empty string, case-insensitive)
       const rawStatus = listing.availabilityStatus;
-      const status = rawStatus ? String(rawStatus).toLowerCase().trim() : 'available';
+      let status = rawStatus ? String(rawStatus).toLowerCase().trim() : 'available';
+      
+      // Handle common variations
+      if (!status || status === 'null' || status === 'undefined') {
+        status = 'available';
+      }
       
       if (status === 'available') {
         statusCounts.available++;
@@ -476,9 +481,9 @@ export async function getComprehensiveAnalytics(barangay: string): Promise<Compr
       } else if (status === 'reserved') {
         statusCounts.reserved++;
       } else {
-        statusCounts.unknown++;
-        // Log unknown statuses for debugging
-        console.warn(`⚠️ Unknown property status: "${rawStatus}" for listing ${listing.id} (normalized to: "${status}")`);
+        // Default unknown statuses to available for more accurate counts
+        statusCounts.available++;
+        console.warn(`⚠️ Unknown property status: "${rawStatus}" for listing ${listing.id}, defaulting to available`);
       }
     });
     

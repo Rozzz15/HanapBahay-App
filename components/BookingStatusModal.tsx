@@ -95,7 +95,7 @@ export default function BookingStatusModal({
 
           {/* Title */}
           <Text style={styles.title}>
-            {isApproved ? '🎉 Booking Approved!' : '❌ Booking Rejected'}
+            {isApproved ? '🎉 Rent Approved!' : '❌ Rent Rejected'}
           </Text>
 
           {/* Property Info */}
@@ -146,8 +146,8 @@ export default function BookingStatusModal({
           <View style={[styles.messageContainer, { backgroundColor: bgColor, borderColor }]}>
             <Text style={styles.messageText}>
               {isApproved
-                ? 'Congratulations! Your booking request has been approved by the property owner. You can now proceed with payment and coordinate your move-in.'
-                : 'Unfortunately, your booking request has been rejected by the property owner. You can explore other available properties or contact the owner for more information.'}
+                ? 'Congratulations! Your rent request has been approved by the property owner. You can now proceed with payment and coordinate your move-in.'
+                : 'Unfortunately, your rent request has been rejected by the property owner. You can explore other available properties or contact the owner for more information.'}
             </Text>
           </View>
 
@@ -164,7 +164,7 @@ export default function BookingStatusModal({
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={styles.primaryButtonText}>View Booking Details</Text>
+                <Text style={styles.primaryButtonText}>View Rent Details</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity

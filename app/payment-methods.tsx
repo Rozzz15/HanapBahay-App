@@ -32,6 +32,8 @@ interface BookingInfo {
   startDate: string;
   endDate: string;
   status: string;
+  selectedRoom?: number;
+  advanceDepositMonths?: number;
 }
 
 const PAYMENT_TYPES = [
@@ -85,8 +87,8 @@ export default function PaymentMethods() {
       // Check if booking is approved
       if (bookingData.status !== 'approved') {
         showAlert(
-          'Booking Not Approved',
-          'Payment methods are only available for approved bookings.',
+          'Rent Not Approved',
+          'Payment methods are only available for approved rents.',
           [{ text: 'OK', onPress: () => router.back() }]
         );
         return;
@@ -248,10 +250,10 @@ export default function PaymentMethods() {
               </View>
             </View>
 
-            {/* Booking Info */}
+            {/* Rent Info */}
             <View style={[sharedStyles.card, { marginBottom: 16, padding: 16 }]}>
               <Text style={[sharedStyles.sectionTitle, { marginBottom: 12, fontSize: designTokens.typography.base, fontWeight: '600' }]}>
-                Booking Details
+                Rent Details
               </Text>
               
               <View style={{ marginBottom: 12 }}>
@@ -366,7 +368,7 @@ export default function PaymentMethods() {
               <Text style={[sharedStyles.statSubtitle, { color: designTokens.colors.info, lineHeight: 20, fontSize: designTokens.typography.sm }]}>
                 1. Choose a payment method above{'\n'}
                 2. Send the exact amount: {formatCurrency(booking.totalAmount)}{'\n'}
-                3. Include your booking reference: {booking.id.slice(-8)}{'\n'}
+                3. Include your rent reference: {booking.id.slice(-8)}{'\n'}
                 4. Take a screenshot of the payment confirmation{'\n'}
                 5. Contact the owner to confirm payment
               </Text>

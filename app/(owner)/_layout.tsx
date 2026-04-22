@@ -98,120 +98,14 @@ export default function OwnerLayout() {
           return;
         }
 
-        // Check if owner application is approved - use single optimized check
+        // Skip approval check - owners are auto-approved on signup
         hasCheckedRef.current = true;
-        setIsCheckingApproval(true);
+        setIsCheckingApproval(false);
         
-        const approvalCheckStart = Date.now();
-        console.log('⏱️ LAYOUT: Starting approval check...');
-        
-        try {
-          // Get application once and derive all needed info from it
-          // This is much faster than 3 separate database queries
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('Approval check timeout')), 5000); // Reduced from 10s to 5s
-          });
-          
-          const appFetchStart = Date.now();
-          const applicationPromise = getOwnerApplication(user.id);
-          
-          // Race against timeout
-          const application = await Promise.race([
-            applicationPromise,
-            timeoutPromise
-          ]) as OwnerApplicationRecord | null;
-          
-          console.log(`⏱️ LAYOUT: getOwnerApplication took ${Date.now() - appFetchStart}ms`);
-          
-          // Derive approval status from application
-          const isApproved = application?.status === 'approved' || false;
-          const hasPending = application?.status === 'pending' || application?.reapplicationRequested === true || false;
-          
-          if (!isApproved) {
-            console.log('🚫 Owner layout: Owner application not approved', { isApproved, hasPending });
-            
-            const barangay = application?.barangay || '';
-            
-            // Get Barangay official contact info in parallel with modal setup
-            const brgyContactPromise = barangay ? getBarangayOfficialContact(barangay) : Promise.resolve(null);
-            
-            // Check if reapplication is requested
-            const reapplicationRequested = application?.reapplicationRequested === true;
-            
-            if (hasPending || reapplicationRequested) {
-              // Build message with contact info
-              let message = reapplicationRequested 
-                ? 'Your Barangay has requested you to update your application. Please review and update your information, then resubmit for review.'
-                : 'Your Owner Application is still under review.\n\nYou will be notified once it is approved.';
-              
-              // Wait for contact info before showing modal
-              const brgyContact = await brgyContactPromise;
-              
-              isRedirectingRef.current = true;
-              modalShownForUserRef.current = user.id;
-              setApplicationModalData({
-                title: reapplicationRequested ? 'Update Required' : 'Application Pending',
-                message: message,
-                brgyContact: brgyContact,
-                barangay: barangay,
-                reapplicationRequested: reapplicationRequested,
-                applicationId: application?.id
-              });
-              setShowApplicationModal(true);
-            } else {
-              // Build message with contact info
-              let message = 'Your owner application has not been approved yet. Please contact your Barangay official for assistance.';
-              
-              // Wait for contact info before showing modal
-              const brgyContact = await brgyContactPromise;
-              
-              isRedirectingRef.current = true;
-              modalShownForUserRef.current = user.id;
-              setApplicationModalData({
-                title: 'Access Denied',
-                message: message,
-                brgyContact: brgyContact,
-                barangay: barangay
-              });
-              setShowApplicationModal(true);
-            }
-            setIsCheckingApproval(false);
-            return;
-          }
-          
-          console.log('✅ Owner layout: Owner application approved, allowing access');
-          console.log(`⏱️ LAYOUT: Total approval check took ${Date.now() - approvalCheckStart}ms`);
-        } catch (error) {
-          console.error('❌ Error checking owner approval:', error);
-          console.log(`⏱️ LAYOUT: Approval check failed after ${Date.now() - approvalCheckStart}ms`);
-          setIsCheckingApproval(false);
-          
-          // If timeout error, show specific message
-          const isTimeout = error instanceof Error && error.message === 'Approval check timeout';
-          const errorMessage = isTimeout 
-            ? 'The approval check is taking too long. Please try again or contact support.'
-            : 'Unable to verify your owner status. Please try again.';
-          
-          isRedirectingRef.current = true;
-          showAlert(
-            'Error',
-            errorMessage,
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  router.replace('/login');
-                }
-              }
-            ]
-          );
-          return;
-        } finally {
-          setIsCheckingApproval(false);
-        }
+        console.log('⏱️ LAYOUT: Skipping approval check - auto-approved');
+        console.log('✅ Owner layout: Owner auto-approved, allowing access');
       }
-    };
-
+    }
     checkOwnerAccess();
   }, [user?.id, isLoading, showApplicationModal]);
 

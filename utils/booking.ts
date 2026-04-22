@@ -1,5 +1,6 @@
 import { db, generateId } from './db';
 import { BookingRecord, PublishedListingRecord, DbUserRecord, RentPaymentRecord } from '@/types';
+import { createSafeConversationUpdate } from './conversation-update-helper';
 
 export interface CreateBookingData {
   propertyId: string;
@@ -603,11 +604,26 @@ async function createInitialPaymentForApprovedBooking(
         expectedAmount = monthlyRent;
       }
       
-      if (firstPayment.amount !== expectedAmount) {
-        console.log('🔄 Updating first payment to include advance deposit:', {
+      // Check if payment details need updating (amount, payment month, or due date)
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const expectedDueDate = new Date(now);
+      expectedDueDate.setDate(expectedDueDate.getDate() + 7);
+      const expectedDueDateString = expectedDueDate.toISOString().split('T')[0];
+      
+      const needsUpdate = firstPayment.amount !== expectedAmount || 
+                         firstPayment.paymentMonth !== currentMonth ||
+                         firstPayment.dueDate !== expectedDueDateString;
+      
+      if (needsUpdate) {
+        console.log('🔄 Updating first payment with correct details:', {
           paymentId: firstPayment.id,
           currentAmount: firstPayment.amount,
           expectedAmount,
+          currentPaymentMonth: firstPayment.paymentMonth,
+          expectedPaymentMonth: currentMonth,
+          currentDueDate: firstPayment.dueDate,
+          expectedDueDate: expectedDueDateString,
           bookingTotalAmount: booking.totalAmount,
           advanceDepositMonths: booking.advanceDepositMonths,
           monthlyRent
@@ -617,9 +633,11 @@ async function createInitialPaymentForApprovedBooking(
           ...firstPayment,
           amount: expectedAmount,
           totalAmount: expectedAmount + (firstPayment.lateFee || 0),
+          paymentMonth: currentMonth, // Use current month, not start date month
+          dueDate: expectedDueDateString, // 7 days from approval
           notes: booking.advanceDepositMonths && booking.advanceDepositMonths > 0
-            ? `First payment (includes ${booking.advanceDepositMonths} month${booking.advanceDepositMonths !== 1 ? 's' : ''} advance deposit)`
-            : 'First payment',
+            ? `First payment (includes ${booking.advanceDepositMonths} month${booking.advanceDepositMonths !== 1 ? 's' : ''} advance deposit) - Due within 7 days from approval`
+            : 'First payment - Due within 7 days from approval',
           receiptNumber: firstPayment.receiptNumber?.startsWith('RENT-')
             ? `INITIAL-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
             : firstPayment.receiptNumber,
@@ -627,9 +645,9 @@ async function createInitialPaymentForApprovedBooking(
         };
         
         await db.upsert('rent_payments', firstPayment.id, updatedPayment);
-        console.log('✅ Updated first payment with advance deposit amount');
+        console.log('✅ Updated first payment with correct amount, payment month, and due date');
       } else {
-        console.log('ℹ️ First payment already has correct advance deposit amount');
+        console.log('ℹ️ First payment already has correct details');
       }
       return;
     }
@@ -651,10 +669,16 @@ async function createInitialPaymentForApprovedBooking(
       paymentAmount = monthlyRent;
     }
     
-    // Use start date for the first payment
-    const startDate = new Date(booking.startDate);
-    const paymentMonth = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
-    const dueDate = booking.startDate;
+    // CRITICAL FIX: Payment month should be CURRENT month (when booking is approved), NOT start date month
+    // This ensures tenant pays for the current month, not a future month
+    const now = new Date();
+    const paymentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    
+    // CRITICAL FIX: Due date should be 7 days from booking approval (now), not the start date
+    // Booking will be removed if payment is not completed within 7 days
+    const dueDate = new Date(now);
+    dueDate.setDate(dueDate.getDate() + 7); // 7 days from approval
+    const dueDateString = dueDate.toISOString().split('T')[0];
     
     const payment: RentPaymentRecord = {
       id: generateId('rent_payment'),
@@ -666,13 +690,13 @@ async function createInitialPaymentForApprovedBooking(
       lateFee: 0,
       totalAmount: paymentAmount,
       paymentMonth: paymentMonth,
-      dueDate: dueDate,
+      dueDate: dueDateString, // Use the 7-day due date string
       status: 'pending', // Will be marked as paid when owner confirms payment
       paymentMethod: booking.selectedPaymentMethod || undefined,
       receiptNumber: `INITIAL-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
       notes: hasAdvanceDeposit
-        ? `First payment (includes ${booking.advanceDepositMonths} month${booking.advanceDepositMonths !== 1 ? 's' : ''} advance deposit)`
-        : 'First payment',
+        ? `First payment (includes ${booking.advanceDepositMonths} month${booking.advanceDepositMonths !== 1 ? 's' : ''} advance deposit) - Due within 7 days from approval`
+        : 'First payment - Due within 7 days from approval',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -682,7 +706,8 @@ async function createInitialPaymentForApprovedBooking(
       paymentId: payment.id,
       amount: paymentAmount,
       paymentMonth,
-      dueDate,
+      dueDate: dueDateString,
+      daysUntilDue: 7,
       hasAdvanceDeposit,
       advanceDepositMonths: booking.advanceDepositMonths,
       monthlyRent
@@ -903,14 +928,14 @@ async function cleanupBookingNotificationMessages(booking: BookingRecord): Promi
             !(msg.readBy || []).includes(booking.ownerId)
           ).length;
           
-          await db.upsert('conversations', conversationId, {
-            ...conversation,
+          const safeUpdate = createSafeConversationUpdate(conversation as any, {
             lastMessageText,
             lastMessageAt,
             unreadByTenant: tenantUnread,
             unreadByOwner: ownerUnread,
             updatedAt: now,
           });
+          await db.upsert('conversations', conversationId, safeUpdate);
         }
       } catch (convError) {
         console.warn('⚠️ Could not update conversation after message deletion:', convError);

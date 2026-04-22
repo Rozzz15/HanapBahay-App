@@ -222,9 +222,20 @@ export const updateMockUser = async (userId: string, updates: Partial<{ email: s
         console.log('✅ Removed old email entry:', oldEmailKey);
         
         // Add new entry with new email as key
-        const updatedUser = { ...userData, ...updates, email: newEmailKey };
+        // IMPORTANT: Preserve password and all user data
+        const updatedUser = { 
+          ...userData, 
+          ...updates, 
+          email: newEmailKey,
+          // Explicitly preserve critical fields that shouldn't be overwritten
+          password: userData.password, // NEVER overwrite password
+          id: userData.id,
+          roles: updates.roles || userData.roles,
+          createdAt: userData.createdAt
+        };
         mockUsers.set(newEmailKey, updatedUser);
         console.log('✅ Added new email entry:', newEmailKey);
+        console.log('🔐 Password preserved:', updatedUser.password ? 'YES ✅' : 'NO ❌');
         
         // Save to persistent storage
         await saveUsersToStorage().catch(err => console.error('Failed to save to storage:', err));
@@ -441,8 +452,27 @@ export async function mockSignIn(email: string, password: string): Promise<MockA
     const user = mockUsers.get(normalizedEmail);
     
     if (!user) {
-      console.log('❌ User not found in database:', normalizedEmail);
+      console.log('❌ User not found in mockUsers:', normalizedEmail);
       console.log('🔍 Available users:', Array.from(mockUsers.keys()));
+      
+      // Check if this email might have been changed in the database
+      try {
+        const { db } = await import('./db');
+        const allUsers = await db.list('users');
+        const userInDb = allUsers.find((u: any) => u.email?.toLowerCase() === normalizedEmail);
+        
+        if (userInDb && userInDb.email !== normalizedEmail) {
+          console.log(`⚠️ Email might have been changed. Database has: ${userInDb.email}`);
+          return {
+            success: false,
+            error: 'EMAIL_CHANGED',
+            errorMessage: `This email address has been changed. Please login with your new email address.`
+          };
+        }
+      } catch (dbError) {
+        console.log('⚠️ Could not check database for email change:', dbError);
+      }
+      
       return {
         success: false,
         error: 'ACCOUNT_NOT_FOUND',
@@ -478,6 +508,28 @@ export async function mockSignIn(email: string, password: string): Promise<MockA
         const dbEmail = dbUserData.email?.toLowerCase().trim();
         const loginEmailMatchesDb = dbEmail && dbEmail === normalizedEmail;
         
+        // CRITICAL: If database has different email, this means email was changed
+        // Delete old email from mockUsers and reject login
+        if (dbEmail && dbEmail !== normalizedEmail) {
+          console.log(`⚠️ EMAIL CHANGED: Database has ${dbEmail}, login attempted with ${normalizedEmail}`);
+          console.log('🔧 Removing old email from mockUsers...');
+          
+          // Delete old email entry from mockUsers
+          mockUsers.delete(normalizedEmail);
+          
+          // Save to persistent storage to ensure old email is gone
+          await saveUsersToStorage();
+          
+          console.log('✅ Old email removed from mockUsers');
+          console.log(`📧 Please login with your new email: ${dbEmail}`);
+          
+          return {
+            success: false,
+            error: 'EMAIL_CHANGED',
+            errorMessage: `Your email has been changed. Please login with your new email address: ${dbEmail}`
+          };
+        }
+        
         // If database has updatedAt and it's newer than mockUsers, and email matches, use database data
         if (dbUserData.updatedAt && loginEmailMatchesDb) {
           const mockUserUpdated = user.updatedAt || user.createdAt;
@@ -506,10 +558,6 @@ export async function mockSignIn(email: string, password: string): Promise<MockA
             user.barangay = dbUserData.barangay || user.barangay;
             user.updatedAt = dbUserData.updatedAt;
           }
-        } else if (dbEmail && dbEmail !== normalizedEmail) {
-          // Database has different email - this means email was changed
-          // Don't update mockUsers with old email, user should login with new email
-          console.log(`⚠️ Database email (${dbEmail}) differs from login email (${normalizedEmail}) - email may have been changed`);
         }
       }
     } catch (dbError) {

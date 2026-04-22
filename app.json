@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/Hanapbahay Logo.png",
     "userInterfaceStyle": "automatic",
-    "owner": "rozzz15",
+    "owner": "hanapbahays-organization",
     "platforms": [
       "ios",
       "android",
@@ -125,8 +125,10 @@
         "origin": false
       },
       "eas": {
-        "projectId": "ecf3327d-2b1e-4257-aa82-fb63fd950956"
-      }
+        "projectId": "28e67b78-f5b3-4f37-aaa1-8bd64fbbe8eb"
+      },
+      "supabaseUrl": "https://dkrctrkqhunttrnkqzsu.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrcmN0cmtxaHVudHRybmtxenN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3ODMxOTEsImV4cCI6MjA4MDM1OTE5MX0.W1gn8bU8R2FpXsN96Biqw9Mgnq-3HrYlnnVfceZ74Gs"
     }
   }
 }

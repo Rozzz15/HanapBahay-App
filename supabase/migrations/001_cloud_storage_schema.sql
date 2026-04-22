@@ -198,21 +198,25 @@ CREATE OR REPLACE FUNCTION cleanup_expired_cache()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_catalog
 AS $$
 BEGIN
-  DELETE FROM property_media_cache
+  DELETE FROM public.property_media_cache
   WHERE expires_at < NOW();
 END;
 $$;
 
 -- Function to update timestamps
 CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- Triggers for updated_at
 CREATE TRIGGER update_user_sessions_updated_at

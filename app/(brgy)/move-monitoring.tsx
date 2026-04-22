@@ -86,8 +86,8 @@ export default function MoveMonitoring() {
         const property = allListings.find(l => l.id === booking.propertyId);
         if (!property) continue;
 
-        // Move-in: Approved bookings with paid status
-        if (booking.status === 'approved' && booking.paymentStatus === 'paid') {
+        // Move-in: Approved bookings with paid status (exclude deleted bookings)
+        if (booking.status === 'approved' && booking.paymentStatus === 'paid' && !booking.isDeleted) {
           moveActivities.push({
             id: `move-in-${booking.id}`,
             type: 'move-in',
@@ -136,7 +136,7 @@ export default function MoveMonitoring() {
       const moveIns = moveActivities.filter(a => a.type === 'move-in');
       const moveOuts = moveActivities.filter(a => a.type === 'move-out');
       const pendingMoveIns = bookingsInBarangay.filter(
-        b => b.status === 'approved' && b.paymentStatus !== 'paid'
+        b => b.status === 'approved' && b.paymentStatus !== 'paid' && !b.isDeleted
       ).length;
 
       setStats({

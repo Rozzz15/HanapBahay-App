@@ -1,5 +1,5 @@
 import { db, generateId } from './db';
-import { TenantComplaintRecord, PublishedListingRecord, BookingRecord, DbUserRecord } from '../types';
+import { TenantComplaintRecord, PublishedListingRecord, BookingRecord, DbUserRecord, Property } from '../types';
 
 /**
  * Create a new tenant complaint
@@ -16,15 +16,62 @@ export async function createTenantComplaint(data: {
   urgency?: TenantComplaintRecord['urgency'];
 }): Promise<TenantComplaintRecord> {
   try {
+    const complaintId = generateId('complaint');
+    
+    console.log('📝 Creating complaint with media:', {
+      photos: data.photos?.length || 0,
+      videos: data.videos?.length || 0
+    });
+    
+    // Upload photos to permanent storage
+    const permanentPhotos: string[] = [];
+    if (data.photos && data.photos.length > 0) {
+      for (let i = 0; i < data.photos.length; i++) {
+        const photoUri = data.photos[i];
+        try {
+          console.log(`📸 Uploading complaint photo ${i + 1}/${data.photos.length}...`);
+          const { uploadToSupabase } = await import('./supabase-storage');
+          const fileName = `complaint_${complaintId}_photo_${i + 1}_${Date.now()}.jpg`;
+          const permanentUrl = await uploadToSupabase(photoUri, 'complaint-media', fileName);
+          permanentPhotos.push(permanentUrl);
+          console.log(`✅ Photo ${i + 1} uploaded successfully`);
+        } catch (error) {
+          console.error(`❌ Failed to upload photo ${i + 1}:`, error);
+          // Keep the original URI if upload fails
+          permanentPhotos.push(photoUri);
+        }
+      }
+    }
+    
+    // Upload videos to permanent storage
+    const permanentVideos: string[] = [];
+    if (data.videos && data.videos.length > 0) {
+      for (let i = 0; i < data.videos.length; i++) {
+        const videoUri = data.videos[i];
+        try {
+          console.log(`🎥 Uploading complaint video ${i + 1}/${data.videos.length}...`);
+          const { uploadToSupabase } = await import('./supabase-storage');
+          const fileName = `complaint_${complaintId}_video_${i + 1}_${Date.now()}.mp4`;
+          const permanentUrl = await uploadToSupabase(videoUri, 'complaint-media', fileName);
+          permanentVideos.push(permanentUrl);
+          console.log(`✅ Video ${i + 1} uploaded successfully`);
+        } catch (error) {
+          console.error(`❌ Failed to upload video ${i + 1}:`, error);
+          // Keep the original URI if upload fails
+          permanentVideos.push(videoUri);
+        }
+      }
+    }
+    
     const complaint: TenantComplaintRecord = {
-      id: generateId('complaint'),
+      id: complaintId,
       tenantId: data.tenantId,
       propertyId: data.propertyId,
       bookingId: data.bookingId,
       category: data.category,
       description: data.description,
-      photos: data.photos || [],
-      videos: data.videos || [],
+      photos: permanentPhotos,
+      videos: permanentVideos,
       isAnonymous: data.isAnonymous,
       status: 'submitted',
       urgency: data.urgency || 'medium',
@@ -32,8 +79,8 @@ export async function createTenantComplaint(data: {
       updatedAt: new Date().toISOString(),
     };
 
+    console.log('✅ Created tenant complaint with permanent media URLs:', complaint.id);
     await db.upsert('tenant_complaints', complaint.id, complaint);
-    console.log('✅ Created tenant complaint:', complaint.id);
     
     return complaint;
   } catch (error) {
@@ -47,10 +94,27 @@ export async function createTenantComplaint(data: {
  */
 export async function getComplaintsByTenant(tenantId: string): Promise<TenantComplaintRecord[]> {
   try {
+    console.log('🔍 getComplaintsByTenant called for:', tenantId.slice(0, 8));
+    
     const allComplaints = await db.list<TenantComplaintRecord>('tenant_complaints');
-    return allComplaints
-      .filter(complaint => complaint.tenantId === tenantId)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    console.log('📊 Total complaints in database:', allComplaints.length);
+    
+    const tenantComplaints = allComplaints.filter(complaint => complaint.tenantId === tenantId);
+    console.log('📋 Tenant complaints found:', tenantComplaints.length);
+    
+    // Check for duplicate IDs
+    const ids = tenantComplaints.map(c => c.id);
+    const uniqueIds = new Set(ids);
+    if (uniqueIds.size !== ids.length) {
+      console.error('❌ DUPLICATE COMPLAINT IDs IN DATABASE!');
+      console.error('Total complaints:', ids.length, 'Unique IDs:', uniqueIds.size);
+      console.error('All IDs:', ids.map(id => id.slice(0, 12)));
+    }
+    
+    const sorted = tenantComplaints.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    console.log('✅ Returning sorted complaints:', sorted.length);
+    
+    return sorted;
   } catch (error) {
     console.error('❌ Error getting tenant complaints:', error);
     return [];
@@ -62,30 +126,55 @@ export async function getComplaintsByTenant(tenantId: string): Promise<TenantCom
  */
 export async function getComplaintsByBarangay(barangayName: string): Promise<TenantComplaintRecord[]> {
   try {
+    console.log('🔍 getComplaintsByBarangay called with:', barangayName);
+    
     const allComplaints = await db.list<TenantComplaintRecord>('tenant_complaints');
-    const allProperties = await db.list<PublishedListingRecord>('published_listings');
+    const publishedProperties = await db.list<PublishedListingRecord>('published_listings');
+    const allProperties = await db.list<Property>('properties'); // Check both tables
     const allUsers = await db.list<DbUserRecord>('users');
+    
+    console.log('📊 Database counts:', {
+      complaints: allComplaints.length,
+      publishedProperties: publishedProperties.length,
+      allProperties: allProperties.length,
+      users: allUsers.length
+    });
     
     // Filter complaints by property's barangay
     const complaintsInBarangay = allComplaints.filter(complaint => {
-      const property = allProperties.find(p => p.id === complaint.propertyId);
-      if (!property) return false;
+      // Try to find property in published_listings first, then fall back to properties table
+      let property = publishedProperties.find(p => p.id === complaint.propertyId);
+      if (!property) {
+        property = allProperties.find(p => p.id === complaint.propertyId) as any;
+      }
+      
+      if (!property) {
+        console.log(`⚠️ Property not found in any table for complaint ${complaint.id.slice(0, 8)}`);
+        return false;
+      }
       
       // Check property's barangay field
       if (property.barangay) {
-        return property.barangay.trim().toUpperCase() === barangayName.trim().toUpperCase();
+        const match = property.barangay.trim().toUpperCase() === barangayName.trim().toUpperCase();
+        console.log(`🏠 Property ${property.id.slice(0, 8)}: barangay="${property.barangay}" vs target="${barangayName}" => ${match ? '✅' : '❌'}`);
+        return match;
       }
       
-      // Fallback: check via property user
-      const propertyUser = allUsers.find(u => u.id === property.userId);
+      // Fallback: check via property user/owner
+      const ownerId = (property as any).userId || (property as any).ownerId;
+      const propertyUser = allUsers.find(u => u.id === ownerId);
       const userBarangay = propertyUser?.barangay;
       if (userBarangay) {
-        return userBarangay.trim().toUpperCase() === barangayName.trim().toUpperCase();
+        const match = userBarangay.trim().toUpperCase() === barangayName.trim().toUpperCase();
+        console.log(`👤 Property ${property.id.slice(0, 8)} owner barangay="${userBarangay}" vs target="${barangayName}" => ${match ? '✅' : '❌'}`);
+        return match;
       }
       
+      console.log(`⚠️ No barangay found for property ${property.id.slice(0, 8)}`);
       return false;
     });
     
+    console.log(`✅ Found ${complaintsInBarangay.length} complaints for barangay "${barangayName}"`);
     return complaintsInBarangay.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } catch (error) {
     console.error('❌ Error getting barangay complaints:', error);
@@ -331,6 +420,48 @@ export function getUrgencyColor(urgency: TenantComplaintRecord['urgency']): stri
     urgent: '#DC2626',
   };
   return colors[urgency] || '#6B7280';
+}
+
+/**
+ * Delete complaints by tenant ID and category
+ */
+export async function deleteComplaintsByTenantAndCategory(
+  tenantId: string, 
+  category: string
+): Promise<number> {
+  try {
+    console.log(`🔍 Searching for complaints with category "${category}" for tenant ${tenantId.slice(0, 8)}...`);
+    
+    const allComplaints = await db.list<TenantComplaintRecord>('tenant_complaints');
+    const matchingComplaints = allComplaints.filter(c => 
+      c.tenantId === tenantId && 
+      (c.category === category || c.category.toLowerCase().includes(category.toLowerCase()))
+    );
+    
+    console.log(`📊 Found ${matchingComplaints.length} matching complaint(s)`);
+    
+    if (matchingComplaints.length === 0) {
+      console.log('⚠️ No matching complaints found');
+      return 0;
+    }
+    
+    // List complaints before deletion
+    matchingComplaints.forEach(c => {
+      console.log(`  - ${c.id.slice(0, 8)}: ${c.category} (${c.status}) - Created: ${c.createdAt}`);
+    });
+    
+    // Delete each matching complaint
+    for (const complaint of matchingComplaints) {
+      console.log(`🗑️ Deleting complaint ${complaint.id.slice(0, 8)}`);
+      await db.delete('tenant_complaints', complaint.id);
+    }
+    
+    console.log(`✅ Deleted ${matchingComplaints.length} complaint(s)`);
+    return matchingComplaints.length;
+  } catch (error) {
+    console.error('❌ Error deleting complaints:', error);
+    throw error;
+  }
 }
 
 /**

@@ -486,7 +486,7 @@ export default function ApprovedOwners() {
               <Text style={sharedStyles.primaryButtonText}>← Back</Text>
             </TouchableOpacity>
             <View style={sharedStyles.headerLeft}>
-              <Text style={sharedStyles.pageTitle}>Approved Owners</Text>
+              <Text style={sharedStyles.pageTitle}>Property Owners</Text>
               <Text style={sharedStyles.pageSubtitle}>
                 BRGY {barangay.toUpperCase()}, LOPEZ, QUEZON
               </Text>
@@ -599,7 +599,7 @@ export default function ApprovedOwners() {
                   <View style={{ alignItems: 'center', padding: 32 }}>
                     <User size={48} color="#9CA3AF" />
                     <Text style={[sharedStyles.sectionTitle, { marginTop: 16 }]}>
-                      No Approved Owners
+                      No Property Owners
                     </Text>
                     <Text style={sharedStyles.statSubtitle}>
                       No owners have been approved in this barangay yet
@@ -613,7 +613,7 @@ export default function ApprovedOwners() {
               <View style={sharedStyles.section}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: designTokens.spacing.md }}>
                   <Text style={sharedStyles.sectionTitle}>
-                    All Approved Owners ({filteredOwners.length}{searchQuery ? ` of ${owners.length}` : ''})
+                    All Property Owners ({filteredOwners.length}{searchQuery ? ` of ${owners.length}` : ''})
                   </Text>
                 </View>
                 {filteredOwners.map((owner, index) => renderOwner(owner, index))}
@@ -657,7 +657,7 @@ export default function ApprovedOwners() {
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <CheckCircle size={20} color="#10B981" />
                   <Text style={[sharedStyles.statLabel, { color: '#10B981' }]}>
-                    Approved Owner Account
+                    Property Owner Account
                   </Text>
                 </View>
                 <Text style={[sharedStyles.statSubtitle, { marginTop: 6, fontSize: 12 }]}>
@@ -972,9 +972,6 @@ export default function ApprovedOwners() {
                           {listing.address || 'No address'}
                         </Text>
                         <View style={{ flexDirection: 'row', gap: 12, marginTop: 2 }}>
-                          <Text style={[sharedStyles.statSubtitle, { fontSize: 11 }]}>
-                            ₱{listing.monthlyRent?.toLocaleString() || '0'}/month
-                          </Text>
                           {listing.rooms && (
                             <Text style={[sharedStyles.statSubtitle, { fontSize: 11 }]}>
                               {listing.rooms} room{listing.rooms > 1 ? 's' : ''}

@@ -156,16 +156,33 @@ const ProfileScreen = memo(function ProfileScreen() {
                 profilePhoto: null as string | null
             };
 
-            // Also load from database (tenants table) for emergency contact
+            // Also load from database (tenants table) for emergency contact AND phone number
             try {
                 const { db } = await import('../../utils/db');
                 const tenantProfile = await db.get('tenants', user.id);
                 if (tenantProfile) {
+                    // Load phone number from tenant profile if not in cloud storage
+                    if (tenantProfile.contactNumber && tenantProfile.contactNumber !== '+63') {
+                        details.phone = tenantProfile.contactNumber;
+                        console.log('📱 Loaded phone from tenant profile:', tenantProfile.contactNumber);
+                    }
                     details.emergencyContactPerson = (tenantProfile as any).emergencyContactPerson || '';
                     details.emergencyContactNumber = (tenantProfile as any).emergencyContactNumber || '';
                 }
             } catch (error) {
-                console.log('⚠️ Could not load emergency contact from database:', error);
+                console.log('⚠️ Could not load from tenant profile:', error);
+            }
+            
+            // Also try loading from users table
+            try {
+                const { db } = await import('../../utils/db');
+                const userRecord = await db.get('users', user.id);
+                if (userRecord && userRecord.phone && userRecord.phone !== '+63') {
+                    details.phone = userRecord.phone;
+                    console.log('📱 Loaded phone from user record:', userRecord.phone);
+                }
+            } catch (error) {
+                console.log('⚠️ Could not load from user record:', error);
             }
 
             if (stored && stored.data) {
@@ -1033,81 +1050,109 @@ const ProfileScreen = memo(function ProfileScreen() {
                                         </View>
                                     </View>
 
-                                    {/* Tenant Type Selection */}
+                                    {/* Tenant Type Selection - Modern Card Design */}
                                     <View style={styles.inputContainer}>
                                         <Text style={styles.inputLabel}>Tenant Type</Text>
-                                        <View style={styles.radioGroup}>
+                                        <Text style={styles.inputHint}>Select your living arrangement</Text>
+                                        <View style={styles.tenantTypeGrid}>
                                             <TouchableOpacity
                                                 style={[
-                                                    styles.radioOption,
-                                                    formData.familyType === 'individual' && styles.radioOptionSelected
+                                                    styles.tenantTypeCard,
+                                                    formData.familyType === 'individual' && styles.tenantTypeCardSelected
                                                 ]}
                                                 onPress={() => setFormData({ ...formData, familyType: 'individual' })}
+                                                activeOpacity={0.7}
                                             >
                                                 <View style={[
-                                                    styles.radioCircle,
-                                                    formData.familyType === 'individual' && styles.radioCircleSelected
+                                                    styles.tenantTypeIconContainer,
+                                                    formData.familyType === 'individual' && styles.tenantTypeIconContainerSelected
                                                 ]}>
-                                                    {formData.familyType === 'individual' && <View style={styles.radioInner} />}
+                                                    <Ionicons 
+                                                        name="person" 
+                                                        size={28} 
+                                                        color={formData.familyType === 'individual' ? '#3B82F6' : '#6B7280'} 
+                                                    />
                                                 </View>
                                                 <Text style={[
-                                                    styles.radioText,
-                                                    formData.familyType === 'individual' && styles.radioTextSelected
+                                                    styles.tenantTypeLabel,
+                                                    formData.familyType === 'individual' && styles.tenantTypeLabelSelected
                                                 ]}>Individual</Text>
+                                                <Text style={styles.tenantTypeDescription}>Single person</Text>
                                             </TouchableOpacity>
+
                                             <TouchableOpacity
                                                 style={[
-                                                    styles.radioOption,
-                                                    formData.familyType === 'couple' && styles.radioOptionSelected
+                                                    styles.tenantTypeCard,
+                                                    formData.familyType === 'couple' && styles.tenantTypeCardSelected
                                                 ]}
                                                 onPress={() => setFormData({ ...formData, familyType: 'couple' })}
+                                                activeOpacity={0.7}
                                             >
                                                 <View style={[
-                                                    styles.radioCircle,
-                                                    formData.familyType === 'couple' && styles.radioCircleSelected
+                                                    styles.tenantTypeIconContainer,
+                                                    formData.familyType === 'couple' && styles.tenantTypeIconContainerSelected
                                                 ]}>
-                                                    {formData.familyType === 'couple' && <View style={styles.radioInner} />}
+                                                    <Ionicons 
+                                                        name="people" 
+                                                        size={28} 
+                                                        color={formData.familyType === 'couple' ? '#3B82F6' : '#6B7280'} 
+                                                    />
                                                 </View>
                                                 <Text style={[
-                                                    styles.radioText,
-                                                    formData.familyType === 'couple' && styles.radioTextSelected
+                                                    styles.tenantTypeLabel,
+                                                    formData.familyType === 'couple' && styles.tenantTypeLabelSelected
                                                 ]}>Couple</Text>
+                                                <Text style={styles.tenantTypeDescription}>Two people</Text>
                                             </TouchableOpacity>
+
                                             <TouchableOpacity
                                                 style={[
-                                                    styles.radioOption,
-                                                    formData.familyType === 'family' && styles.radioOptionSelected
+                                                    styles.tenantTypeCard,
+                                                    formData.familyType === 'family' && styles.tenantTypeCardSelected
                                                 ]}
                                                 onPress={() => setFormData({ ...formData, familyType: 'family' })}
+                                                activeOpacity={0.7}
                                             >
                                                 <View style={[
-                                                    styles.radioCircle,
-                                                    formData.familyType === 'family' && styles.radioCircleSelected
+                                                    styles.tenantTypeIconContainer,
+                                                    formData.familyType === 'family' && styles.tenantTypeIconContainerSelected
                                                 ]}>
-                                                    {formData.familyType === 'family' && <View style={styles.radioInner} />}
+                                                    <Ionicons 
+                                                        name="home" 
+                                                        size={28} 
+                                                        color={formData.familyType === 'family' ? '#3B82F6' : '#6B7280'} 
+                                                    />
                                                 </View>
                                                 <Text style={[
-                                                    styles.radioText,
-                                                    formData.familyType === 'family' && styles.radioTextSelected
+                                                    styles.tenantTypeLabel,
+                                                    formData.familyType === 'family' && styles.tenantTypeLabelSelected
                                                 ]}>Family</Text>
+                                                <Text style={styles.tenantTypeDescription}>With children</Text>
                                             </TouchableOpacity>
+
                                             <TouchableOpacity
                                                 style={[
-                                                    styles.radioOption,
-                                                    formData.familyType === 'group' && styles.radioOptionSelected
+                                                    styles.tenantTypeCard,
+                                                    formData.familyType === 'group' && styles.tenantTypeCardSelected
                                                 ]}
                                                 onPress={() => setFormData({ ...formData, familyType: 'group' })}
+                                                activeOpacity={0.7}
                                             >
                                                 <View style={[
-                                                    styles.radioCircle,
-                                                    formData.familyType === 'group' && styles.radioCircleSelected
+                                                    styles.tenantTypeIconContainer,
+                                                    formData.familyType === 'group' && styles.tenantTypeIconContainerSelected
                                                 ]}>
-                                                    {formData.familyType === 'group' && <View style={styles.radioInner} />}
+                                                    <Ionicons 
+                                                        name="people-circle" 
+                                                        size={28} 
+                                                        color={formData.familyType === 'group' ? '#3B82F6' : '#6B7280'} 
+                                                    />
                                                 </View>
                                                 <Text style={[
-                                                    styles.radioText,
-                                                    formData.familyType === 'group' && styles.radioTextSelected
+                                                    styles.tenantTypeLabel,
+                                                    formData.familyType === 'group' && styles.tenantTypeLabelSelected
                                                 ]}>Group/Shared</Text>
+                                                <Text style={styles.tenantTypeDescription}>Multiple people</Text>
                                             </TouchableOpacity>
                                         </View>
                                     </View>
@@ -1640,6 +1685,71 @@ const styles = StyleSheet.create({
     },
     radioTextSelected: {
         color: '#10B981',
+    },
+    // Modern Tenant Type Card Styles
+    inputHint: {
+        fontSize: 13,
+        color: '#6B7280',
+        marginTop: 4,
+        marginBottom: 12,
+    },
+    tenantTypeGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 12,
+        marginTop: 8,
+    },
+    tenantTypeCard: {
+        flex: 1,
+        minWidth: '45%',
+        maxWidth: '48%',
+        backgroundColor: '#FFFFFF',
+        borderWidth: 2,
+        borderColor: '#E5E7EB',
+        borderRadius: 16,
+        padding: 16,
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    tenantTypeCardSelected: {
+        borderColor: '#3B82F6',
+        backgroundColor: '#EFF6FF',
+        shadowColor: '#3B82F6',
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    tenantTypeIconContainer: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#F3F4F6',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    tenantTypeIconContainerSelected: {
+        backgroundColor: '#DBEAFE',
+    },
+    tenantTypeLabel: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#1F2937',
+        marginBottom: 4,
+        textAlign: 'center',
+    },
+    tenantTypeLabelSelected: {
+        color: '#3B82F6',
+        fontWeight: '700',
+    },
+    tenantTypeDescription: {
+        fontSize: 12,
+        color: '#6B7280',
+        textAlign: 'center',
     },
     modalFooter: {
         padding: 20,

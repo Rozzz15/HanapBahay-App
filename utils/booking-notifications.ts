@@ -2,6 +2,7 @@ import { db, generateId } from './db';
 import { MessageRecord, ConversationRecord } from '@/types';
 import { createOrFindConversation } from './conversation-utils';
 import { showAlert } from './alert';
+import { createSafeConversationUpdate } from './conversation-update-helper';
 
 interface PaymentAccount {
   id: string;
@@ -129,34 +130,18 @@ export async function sendBookingApprovalNotification(
     await db.upsert('messages', messageId, messageRecord);
     console.log('✅ Booking approval message saved');
 
-    // Update conversation - but don't update lastMessageText for notifications
-    // Notifications should not appear in conversation preview
+    // FIXED: Update conversation with notification text so it appears in the conversation list
+    // This ensures the conversation shows up immediately after booking approval
     const conversation = await db.get<ConversationRecord>('conversations', conversationId);
     if (conversation) {
-      // Get the last non-notification message to use as lastMessageText
-      const { db } = await import('./db');
-      const allMessages = await db.list<MessageRecord>('messages');
-      const conversationMessages = allMessages
-        .filter(msg => 
-          msg.conversationId === conversationId && 
-          msg.type !== 'notification'
-        )
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      
-      const lastRegularMessage = conversationMessages[0];
-      const lastMessageText = lastRegularMessage 
-        ? (lastRegularMessage.type === 'image' ? '📷 Image' : lastRegularMessage.text.substring(0, 100))
-        : conversation.lastMessageText;
-      const lastMessageAt = lastRegularMessage?.createdAt || conversation.lastMessageAt || now;
-      
-      await db.upsert('conversations', conversationId, {
-        ...conversation,
-        lastMessageText: lastMessageText,
-        lastMessageAt: lastMessageAt,
+      const safeUpdate = createSafeConversationUpdate(conversation, {
+        lastMessageText: messageText.substring(0, 100), // Use the notification text
+        lastMessageAt: now,
         unreadByTenant: (conversation.unreadByTenant || 0) + 1,
         updatedAt: now
       });
-      console.log('✅ Conversation updated');
+      await db.upsert('conversations', conversationId, safeUpdate);
+      console.log('✅ Conversation updated with notification text');
     }
 
     console.log('✅ Booking approval notification sent successfully');
@@ -213,13 +198,13 @@ export async function sendBookingRejectionNotification(
     // Update conversation
     const conversation = await db.get<ConversationRecord>('conversations', conversationId);
     if (conversation) {
-      await db.upsert('conversations', conversationId, {
-        ...conversation,
+      const safeUpdate = createSafeConversationUpdate(conversation, {
         lastMessageText: messageText.substring(0, 100),
         lastMessageAt: now,
         unreadByTenant: (conversation.unreadByTenant || 0) + 1,
         updatedAt: now
       });
+      await db.upsert('conversations', conversationId, safeUpdate);
       console.log('✅ Conversation updated');
     }
 

@@ -54,9 +54,11 @@ type CollectionName =
   | 'listing_drafts'
   | 'rent_payments'
   | 'tenant_complaints'
-  | 'maintenance_requests';
+  | 'maintenance_requests'
+  | 'password_reset_tokens'
+  | 'properties';
 
-type AnyRecord = DbUserRecord | TenantProfileRecord | OwnerProfileRecord | OwnerVerificationRecord | OwnerApplicationRecord | BrgyNotificationRecord | PaymentProfileRecord | PaymentAccount | UserProfilePhotoRecord | PublishedListingRecord | ListingInquiryRecord | ConversationRecord | MessageRecord | PropertyPhotoRecord | PropertyVideoRecord | BookingRecord | FavoriteRecord | PropertyRatingRecord;
+type AnyRecord = DbUserRecord | TenantProfileRecord | OwnerProfileRecord | OwnerVerificationRecord | OwnerApplicationRecord | BrgyNotificationRecord | PaymentProfileRecord | PaymentAccount | UserProfilePhotoRecord | PublishedListingRecord | ListingInquiryRecord | ConversationRecord | MessageRecord | PropertyPhotoRecord | PropertyVideoRecord | BookingRecord | FavoriteRecord | PropertyRatingRecord | RentPaymentRecord | TenantComplaintRecord | MaintenanceRequestRecord | Record<string, any>;
 
 // Type guards for better type safety
 export function isPublishedListingRecord(record: AnyRecord): record is PublishedListingRecord {

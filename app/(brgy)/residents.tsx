@@ -98,7 +98,10 @@ export default function ResidentsPage() {
 
       // Filter bookings to only include those with paid payment status
       // Only count tenants with completed payments as residents
-      const paidBookingsInBarangay = approvedBookingsInBarangay.filter(b => b.paymentStatus === 'paid');
+      // Exclude deleted bookings to match owner's tenant list
+      const paidBookingsInBarangay = approvedBookingsInBarangay.filter(b => 
+        b.paymentStatus === 'paid' && !b.isDeleted
+      );
 
       // Get unique tenant IDs with their booking counts and bookings
       const tenantMap = new Map<string, BookingRecord[]>();
@@ -742,7 +745,7 @@ export default function ResidentsPage() {
                   fontWeight: '600',
                   color: designTokens.colors.success,
                 }}>
-                  {resident.bookingCount} {resident.bookingCount === 1 ? 'booking' : 'bookings'}
+                  {resident.bookingCount} {resident.bookingCount === 1 ? 'rent' : 'rents'}
                 </Text>
               </View>
             </View>
@@ -836,7 +839,7 @@ export default function ResidentsPage() {
               </View>
             </View>
 
-            {/* Bookings */}
+            {/* Rents */}
             <View>
               <Text style={{
                 fontSize: designTokens.typography.xs,
@@ -846,7 +849,7 @@ export default function ResidentsPage() {
                 marginBottom: designTokens.spacing.sm,
                 letterSpacing: 0.5,
               }}>
-                Active Bookings ({resident.bookingCount})
+                Active Rents ({resident.bookingCount})
               </Text>
               {resident.bookings.slice(0, 3).map((booking) => (
                 <View
@@ -890,13 +893,6 @@ export default function ResidentsPage() {
                         {formatDate(booking.startDate)}
                       </Text>
                     </View>
-                    <Text style={{
-                      fontSize: designTokens.typography.xs,
-                      fontWeight: '600',
-                      color: designTokens.colors.success,
-                    }}>
-                      {formatCurrency(booking.monthlyRent)}/mo
-                    </Text>
                   </View>
                 </View>
               ))}
@@ -907,7 +903,7 @@ export default function ResidentsPage() {
                   textAlign: 'center',
                   marginTop: designTokens.spacing.xs,
                 }}>
-                  +{resident.bookingCount - 3} more {resident.bookingCount - 3 === 1 ? 'booking' : 'bookings'}
+                  +{resident.bookingCount - 3} more {resident.bookingCount - 3 === 1 ? 'rent' : 'rents'}
                 </Text>
               )}
             </View>

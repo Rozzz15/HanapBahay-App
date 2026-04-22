@@ -249,7 +249,7 @@ export default function FavoritesScreen() {
               // Set in-memory flag to skip redirect
               (globalThis as any).__skipBookingRedirect = true;
               // Navigate to the home tab
-              router.push('/(tabs)/');
+              router.push('/(tabs)' as any);
             }}
           >
             <Text style={styles.browseButtonText}>Browse Properties</Text>

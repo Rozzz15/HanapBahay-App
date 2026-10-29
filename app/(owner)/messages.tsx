@@ -17,6 +17,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/utils/db';
+import { supabase } from '@/utils/supabase-client';
 import { showAlert } from '@/utils/alert';
 import { ConversationRecord, MessageRecord } from '@/types';
 import { createOrFindConversation } from '@/utils/conversation-utils';

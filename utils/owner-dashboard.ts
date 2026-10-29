@@ -95,10 +95,26 @@ export interface PaymentAccount {
 // Dashboard Stats
 export async function getOwnerDashboardStats(ownerId: string): Promise<OwnerDashboardStats> {
   try {
+    const emptyStats: OwnerDashboardStats = {
+      totalListings: 0,
+      totalViews: 0,
+      monthlyRevenue: 0,
+      totalBookings: 0,
+      activeBookings: 0,
+      pendingBookings: 0,
+      completedBookings: 0,
+      cancelledBookings: 0,
+      availableListings: 0,
+      occupiedListings: 0,
+      totalTenants: 0,
+      totalRevenue: 0,
+      averageRating: 0,
+    };
+
     // Get from local database instead of Supabase
     // Get all listings for this owner
-    const { data: allListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); return []; }
-    const ownerListings = allListings.filter(listing => listing.userId === ownerId || listing.user_id === ownerId);
+    const { data: allListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); return emptyStats; }
+    const ownerListings = (allListings || []).filter(listing => listing.userId === ownerId || listing.user_id === ownerId);
     
     const totalListings = ownerListings.length;
     const totalViews = ownerListings.reduce((sum, listing) => sum + (listing.views || 0), 0);
@@ -106,7 +122,7 @@ export async function getOwnerDashboardStats(ownerId: string): Promise<OwnerDash
     // Get total bookings for this owner (all statuses, excluding soft-deleted ones)
     const { data: allBookingsData = [], error: bookingsError } = await supabase.from('bookings').select('*'); if (bookingsError) { console.error('Error fetching bookings:', bookingsError); }
     // Filter by owner_id (snake_case) or ownerId (camelCase) and exclude soft-deleted bookings
-    const ownerBookings = allBookingsData.filter(booking => 
+    const ownerBookings = (allBookingsData || []).filter(booking => 
       (booking.owner_id === ownerId || booking.ownerId === ownerId) && 
       !booking.is_deleted && !booking.isDeleted
     );
@@ -118,7 +134,7 @@ export async function getOwnerDashboardStats(ownerId: string): Promise<OwnerDash
     const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM format
     
     // Calculate revenue from booking deposits (initial payments) created this month
-    const paidOwnerBookings = allBookingsData.filter(booking => 
+    const paidOwnerBookings = (allBookingsData || []).filter(booking => 
       (booking.owner_id === ownerId || booking.ownerId === ownerId) && 
       booking.status === 'approved' &&
       (booking.payment_status === 'paid' || booking.paymentStatus === 'paid') && // ONLY count paid bookings in revenue
@@ -366,7 +382,7 @@ export async function deleteOwnerListing(ownerId: string, listingId: string): Pr
     try {
       // Remove from favorites
       const { data: favorites = [], error: favError } = await supabase.from('favorites').select('*'); if (favError) { console.error('Error fetching favorites:', favError); }
-      for (const favorite of favorites) {
+      for (const favorite of (favorites || [])) {
         if (favorite.propertyId === listingId || favorite.property_id === listingId) {
           await db.remove('favorites', favorite.id);
         }
@@ -375,7 +391,7 @@ export async function deleteOwnerListing(ownerId: string, listingId: string): Pr
       // Soft delete related bookings (preserve for analytics)
       const { data: bookings = [], error: bookError } = await supabase.from('bookings').select('*'); if (bookError) { console.error('Error fetching bookings:', bookError); }
       const now = new Date().toISOString();
-      for (const booking of bookings) {
+      for (const booking of (bookings || [])) {
         if (booking.propertyId === listingId && !booking.isDeleted) {
           await db.upsert('bookings', booking.id, {
             ...booking,
@@ -466,16 +482,17 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
     
     // Get all conversations
     const { data: conversations = [], error: convError } = await supabase.from('conversations').select('*'); if (convError) { console.error('Error fetching conversations:', convError); }
-    console.log('💬 All conversations:', conversations.length);
-    console.log('💬 Conversations data:', conversations);
+    const allConversations = conversations || [];
+    console.log('💬 All conversations:', allConversations.length);
+    console.log('💬 Conversations data:', allConversations);
     
     // Debug: Check if there are any conversations with old field names that need migration
-    const needsMigration = conversations.some(conv => 
+    const needsMigration = allConversations.some(conv => 
       (conv as any).owner_id || (conv as any).tenant_id || (conv as any).participant_ids
     );
     if (needsMigration) {
       console.log('🔄 Found conversations with old field names, attempting migration...');
-      for (const conv of conversations) {
+      for (const conv of allConversations) {
         if ((conv as any).owner_id || (conv as any).tenant_id || (conv as any).participant_ids) {
           const migratedConv = {
             id: conv.id,
@@ -545,10 +562,11 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
     
     // Get all messages and normalize them
     const { data: allMessages = [], error: msgError } = await supabase.from('messages').select('*'); if (msgError) { console.error('Error fetching messages:', msgError); }
-    console.log('📨 All messages:', allMessages.length);
-    console.log('📨 Messages data:', allMessages);
+    const messagesList = allMessages || [];
+    console.log('📨 All messages:', messagesList.length);
+    console.log('📨 Messages data:', messagesList);
     
-    const normalizedMessages = allMessages.map(msg => ({
+    const normalizedMessages = messagesList.map(msg => ({
       id: (msg as any).id,
       conversationId: (msg as any).conversationId || (msg as any).conversation_id || '',
       senderId: (msg as any).senderId || (msg as any).sender_id || '',
@@ -565,7 +583,8 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
     
     // Get all users to resolve tenant names
     const { data: allUsers = [], error: usersError } = await supabase.from('users').select('*'); if (usersError) { console.error('Error fetching users:', usersError); }
-    console.log('👥 All users:', allUsers.length);
+    const usersList = allUsers || [];
+    console.log('👥 All users:', usersList.length);
     
     const ownerMessages: OwnerMessage[] = [];
     
@@ -588,7 +607,7 @@ export async function getOwnerMessages(ownerId: string): Promise<OwnerMessage[]>
         // Get tenant name from users table
         // The tenant is the other participant (not the current owner)
         const otherParticipantId = conv.ownerId === ownerId ? conv.tenantId : conv.ownerId;
-        const tenant = allUsers.find(u => (u as any).id === otherParticipantId);
+        const tenant = usersList.find(u => (u as any).id === otherParticipantId);
         const tenantName = (tenant as any)?.name || 'Tenant';
         console.log('👤 Tenant name for conversation', conv.id, ':', tenantName, '(other participant:', otherParticipantId, ')');
         
@@ -709,7 +728,7 @@ export async function sendOwnerMessage(
 export async function getOwnerPaymentAccounts(ownerId: string): Promise<PaymentAccount[]> {
   try {
     const { data: allAccounts = [], error: accountsError } = await supabase.from('payment_accounts').select('*'); if (accountsError) { console.error('Error fetching payment accounts:', accountsError); return []; }
-    return allAccounts
+    return (allAccounts || [])
       .filter((acc: any) => acc.ownerId === ownerId)
       .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()) as PaymentAccount[];
   } catch (error) {
@@ -774,8 +793,8 @@ export async function deleteOwnerPaymentAccount(ownerId: string, accountId: stri
 // Check if owner has listings
 export async function hasOwnerListings(ownerId: string): Promise<boolean> {
   try {
-    const { data: allListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); return []; }
-    return allListings.some((listing: any) => listing.user_id === ownerId || listing.userId === ownerId);
+    const { data: allListings = [], error: listingsError } = await supabase.from('published_listings').select('*'); if (listingsError) { console.error('Error fetching listings:', listingsError); return false; }
+    return (allListings || []).some((listing: any) => listing.user_id === ownerId || listing.userId === ownerId);
   } catch (error) {
     console.error('Error checking owner listings:', error);
     return false;

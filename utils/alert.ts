@@ -6,11 +6,7 @@ import { Alert } from 'react-native';
 export const showAlert = (
   title: string,
   message?: string,
-  buttons?: Array<{
-    text: string;
-    onPress?: () => void;
-    style?: 'default' | 'cancel' | 'destructive';
-  }>
+  buttons?: any[]
 ) => {
   if (false) {
     // Web implementation

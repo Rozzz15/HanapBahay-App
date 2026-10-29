@@ -7,6 +7,7 @@ export const designTokens = {
   colors: {
     // Background Colors
     background: '#F8FAFC',
+    backgroundLight: '#F1F5F9',
     white: '#FFFFFF',
     
     // Text Colors

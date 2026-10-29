@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { db } from '@/utils/db';
+import { supabase } from '@/utils/supabase-client';
 import { showAlert } from '@/utils/alert';
 import { createSafeConversationUpdate } from '@/utils/conversation-update-helper';
 

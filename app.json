@@ -1,12 +1,12 @@
 {
   "expo": {
     "name": "HanapBahay",
-    "slug": "hanapbahay",
+    "slug": "hanap-bahay",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/Hanapbahay Logo.png",
     "userInterfaceStyle": "automatic",
-    "owner": "hanapbahays-organization",
+    "owner": "itoyungbago",
     "platforms": [
       "ios",
       "android",
@@ -91,6 +91,10 @@
         "foregroundImage": "./assets/images/Hanapbahay Logo.png",
         "backgroundColor": "#3B82F6"
       },
+      "build": {
+        "gradleVersion": "8.14.3",
+        "ndkVersion": "27.1.12297006"
+      },
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.INTERNET",
@@ -125,7 +129,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "28e67b78-f5b3-4f37-aaa1-8bd64fbbe8eb"
+        "projectId": "1ad3b29c-6136-4f12-a81a-ccd711426412"
       },
       "supabaseUrl": "https://dkrctrkqhunttrnkqzsu.supabase.co",
       "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRrcmN0cmtxaHVudHRybmtxenN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3ODMxOTEsImV4cCI6MjA4MDM1OTE5MX0.W1gn8bU8R2FpXsN96Biqw9Mgnq-3HrYlnnVfceZ74Gs"

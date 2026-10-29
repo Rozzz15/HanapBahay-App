@@ -482,7 +482,7 @@ export interface MaintenanceRequestRecord {
   description: string;
   category: 'plumbing' | 'electrical' | 'appliance' | 'heating_cooling' | 'structural' | 'other';
   priority: 'low' | 'medium' | 'high' | 'urgent';
-  status: 'pending' | 'in_progress' | 'resolved' | 'cancelled';
+  status: 'pending' | 'in_progress' | 'resolved' | 'cancelled' | 'completed';
   photos: string[]; // Array of photo URIs
   videos: string[]; // Array of video URIs
   ownerNotes?: string;
